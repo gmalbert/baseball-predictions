@@ -1,0 +1,51 @@
+# ============================================================
+# Baseball Predictions — Python Requirements
+# ============================================================
+
+# ---- Core ----
+python-dotenv>=1.0
+pandas>=2.1
+numpy>=1.24
+
+# ---- Data Storage ----
+pyarrow>=14.0           # Parquet read/write
+
+# ---- MLB Data Ingestion ----
+# Choose versions compatible with current Python (3.11+).
+# the mlb-statsapi package drops support for Python <3.11 in recent releases,
+# and pybaseball's latest release is 2.2.7 as of 2026.
+MLB-StatsAPI>=1.7,<1.10  # Official MLB stats (1.9.x works on Python 3.13)
+pybaseball>=2.2.7        # Statcast & advanced stats (2.2.7 is latest)
+requests>=2.31
+requests-cache>=1.1     # Cache API responses locally
+
+# ---- Odds ----
+# (The Odds API accessed via requests — no dedicated package)
+
+# ---- Machine Learning ----
+scikit-learn>=1.3
+xgboost>=2.0
+lightgbm>=4.1
+joblib>=1.3             # Model serialization
+
+# ---- Scheduling ----
+apscheduler>=3.10       # Daily pipeline scheduling
+
+# ---- Dashboard ----
+streamlit>=1.51
+plotly>=5.18            # Interactive charts
+altair>=5.2             # Alternative charting (optional)
+
+# ---- Optional: REST API (uncomment if needed) ----
+# fastapi>=0.109
+# uvicorn[standard]>=0.27
+# pydantic>=2.5
+
+# ---- Optional: PostgreSQL (uncomment if scaling beyond flat files) ----
+# sqlalchemy>=2.0
+# psycopg2-binary>=2.9
+
+# ---- Dev / Testing (install via: pip install -r requirements-dev.txt) ----
+# ruff
+# pytest
+# pytest-cov
