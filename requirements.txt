@@ -34,6 +34,7 @@ apscheduler>=3.10       # Daily pipeline scheduling
 # ---- Dashboard ----
 streamlit>=1.51
 plotly>=5.18            # Interactive charts
+statsmodels>=0.14       # Required for Plotly lowess trendlines
 altair>=5.2             # Alternative charting (optional)
 
 # ---- Optional: REST API (uncomment if needed) ----
