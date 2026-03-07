@@ -1,6 +1,6 @@
 # 04 – Betting Models
 
-Three prediction models: **Underdog (moneyline)**, **Spread (run line)**, and **Over/Under (totals)**. Each outputs a probability and a confidence score.
+✅ **Completed** — three prediction models (Underdog moneyline, Spread run line, Over/Under totals) implemented with probability + confidence outputs.
 
 ---
 
@@ -27,7 +27,7 @@ Three prediction models: **Underdog (moneyline)**, **Spread (run line)**, and **
 
 ---
 
-## 1. Shared Feature Engineering
+## 1. Shared Feature Engineering ✅ Completed
 
 ```python
 # src/models/features.py
@@ -235,7 +235,7 @@ TOTAL_FEATURES = SHARED_FEATURES + WEATHER_FEATURES + [
 
 ---
 
-## 2. Underdog Model (Moneyline)
+## 2. Underdog Model (Moneyline) ✅ Completed (Moneyline)
 
 Predicts whether the **moneyline underdog** will win outright.
 
@@ -451,7 +451,7 @@ def _confidence_label(score: float) -> str:
 
 ---
 
-## 3. Spread Model (Run Line -1.5)
+## 3. Spread Model (Run Line) ✅ Completed (Run Line -1.5)
 
 Predicts whether the **favorite covers the -1.5 run line**.
 
@@ -613,7 +613,7 @@ def _compute_spread_confidence(prob, edge):
 
 ---
 
-## 4. Over/Under Model (Totals)
+## 4. Over/Under Model (Totals) ✅ Completed (Totals)
 
 Predicts whether the game total will go **Over** or **Under** the posted total.
 
@@ -809,7 +809,7 @@ def _compute_totals_confidence(prob, edge):
 
 ---
 
-## 5. Ensemble / Meta-Model (Optional Enhancement)
+## 5. Ensemble / Meta-Model (Optional Enhancement) ✅ Added utilities
 
 ```python
 # src/models/ensemble.py
@@ -860,5 +860,35 @@ joblib>=1.3.0
 ```
 
 ---
+
+## 6. Automated Model Training ✅
+
+While the Streamlit **Models** tab provides a convenient interactive way to rebuild
+the feature matrix and train the three classifiers, you don’t need to click
+anything manually once the project is deployed. A simple CLI helper exists at
+
+```text
+scripts/train_models.py
+```
+
+Running it performs the same steps as the UI: it calls
+`build_model_features()` for the desired year range and then invokes
+`train_moneyline_model()`, `train_spread_model()` and `train_totals_model()` from
+`src/models`. Models are serialized to the `models/` directory just as they are
+when training interactively.
+
+The daily ingestion workflow (`.github/workflows/ingestion.yml`) now includes a
+post‑ingestion step that executes this script *only* during baseball season
+(March–November). That means whenever new data lands, the serialized models are
+re‑trained automatically without any human intervention. Outside of season the
+workflow exits early and the models remain unchanged.
+
+To run the training manually for debugging or an off‑cycle update:
+
+```bash
+python scripts/train_models.py --start-year 2020 --end-year 2025
+```
+
+The workflow log will display ROC‑AUC and other basic metrics for each model.
 
 > **Next:** [05-model-evaluation.md](05-model-evaluation.md) – Measuring how well these models actually perform.

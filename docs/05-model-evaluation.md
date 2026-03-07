@@ -19,7 +19,7 @@ How to measure whether the models are actually profitable, well-calibrated, and 
 
 ---
 
-## 1. Backtesting Framework
+## 1. Backtesting Framework ✅ Completed
 
 ```python
 # src/evaluation/backtester.py
@@ -241,7 +241,7 @@ def walk_forward_backtest(
 
 ---
 
-## 2. Calibration Analysis
+## 2. Calibration Analysis ✅ Completed
 
 ```python
 # src/evaluation/calibration.py
@@ -325,7 +325,7 @@ def calibration_plot_data(
 
 ---
 
-## 3. Profitability Analysis
+## 3. Profitability Analysis ✅ Completed
 
 ```python
 # src/evaluation/profitability.py
@@ -446,7 +446,7 @@ def edge_filter_analysis(result: BacktestResult) -> pd.DataFrame:
 
 ---
 
-## 4. Closing Line Value (CLV) Tracker
+## 4. Closing Line Value (CLV) Tracker ✅ Completed
 
 ```python
 # src/evaluation/clv.py
@@ -508,7 +508,7 @@ def clv_report(df: pd.DataFrame) -> dict:
 
 ---
 
-## 5. Model Comparison Dashboard Data
+## 5. Model Comparison Dashboard Data ✅ Completed
 
 ```python
 # src/evaluation/dashboard.py
@@ -569,7 +569,7 @@ def generate_dashboard_data(
 
 ---
 
-## 6. Running the Full Evaluation
+## 6. Running the Full Evaluation ✅ Completed
 
 ```python
 # scripts/run_evaluation.py

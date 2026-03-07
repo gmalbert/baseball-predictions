@@ -1,8 +1,10 @@
-# Copilot Instructions — Baseball Predictions
+# Copilot Instructions — Betting Cleanup
+
+*Repository formerly known as `baseball-predictions`.*
 
 ## Project Overview
 
-MLB baseball betting prediction system that uses machine learning models to generate daily picks. Built entirely in Python with a Streamlit dashboard for visualization.
+MLB betting analytics platform that generates daily wagering recommendations, backtests models, and displays results via a Streamlit dashboard. Side‑loaded data is cached on first access (no per‑tab delays), models retrain automatically in season via GitHub Actions, and a branded footer is appended to every page.
 
 ## Tech Stack
 
@@ -18,7 +20,7 @@ MLB baseball betting prediction system that uses machine learning models to gene
 ## Project Structure
 
 ```
-baseball-predictions/
+betting-cleanup/  # repo root (formerly baseball-predictions)
 ├── data_files/
 │   ├── raw/              # Downloaded CSVs from APIs
 │   └── processed/        # Consolidated Parquet files
@@ -58,7 +60,8 @@ baseball-predictions/
 - Use **pathlib.Path** for file paths, never string concatenation
 - Use **pyarrow schemas** when writing Parquet files for type safety
 - Prefer **pandas DataFrames** as the primary data interchange format
-- Use **`@st.cache_data`** decorator for all Streamlit data-loading functions
+- Pre-warm large datasets with `@st.cache_data` and call them once at startup to avoid repeated loads. Tabs should reference preloaded variables rather than calling data functions themselves.
+
 - Use **Plotly** for interactive charts in the dashboard
 - Follow **ruff** for linting and formatting
 
@@ -103,6 +106,7 @@ Models are trained with `scikit-learn` pipelines and serialized with `joblib`.
 ## What NOT to Do
 
 - Do not use React, Next.js, or any JavaScript framework
-- Do not assume PostgreSQL is available — always use Parquet as the default
+- Do not assume PostgreSQL is available — the project is file-based. A `load_parquet_to_postgres` helper exists but is unused and may be removed.
+
 - Do not hardcode API keys — use environment variables or `st.secrets`
 - Do not place business logic in Streamlit pages — keep it in `src/`

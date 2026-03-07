@@ -1,6 +1,17 @@
-# baseball-predictions
+<img src="https://raw.githubusercontent.com/gmalbert/betting-oracle/main/data_files/logo.png" width="200" alt="Betting Cleanup logo">
 
-MLB betting predictions powered by machine learning. The goal of this project is to generate daily wagering recommendations, track historical performance, and provide a dashboard for exploring model results and bankroll metrics. Built with Python, Streamlit, and Parquet/CSV data storage.
+# Betting Cleanup
+
+All-in-one MLB betting analytics platform.
+
+*Generate daily picks, backtest model performance, and explore results through an
+interactive Streamlit dashboard.  The app preloads all data for instant tab
+switching, uses a light theme for readability, and automatically retrains models
+via GitHub Actions during the baseball season.*
+
+Built in Python with a Parquet/CSV‑based data store, XGBoost models, and
+Live‑Odds integration.
+
 
 ## Roadmap
 
@@ -17,3 +28,38 @@ MLB betting predictions powered by machine learning. The goal of this project is
 | 08 | [Streamlit Dashboard](docs/08-frontend-layout.md) | Multi-page dashboard design and components |
 | 09 | [Deployment & Ops](docs/09-deployment-ops.md) | Docker, CI/CD, Streamlit Cloud, monitoring |
 | 10 | [Bankroll & Risk](docs/10-bankroll-strategy.md) | Kelly criterion, bankroll tracking, responsible gambling |
+
+---
+
+## Highlights
+
+* **Instant dashboard** – all primary datasets are cached on first load, so tab
+  switches feel instantaneous.
+* **Light theme only** – adopted after feedback; easy to read in bright
+environments.
+* **Automated model training** – GitHub Actions workflow retrains models daily
+  during baseball season (March–November) using `scripts/train_models.py`.
+* **Evaluation tab** – run walk‑forward backtests, calibration charts, and ROI
+  reports directly from the UI.
+* **Integrated footer** – Betting Oracle branding appears on every page via
+  `footer.py`.
+
+---
+
+## Getting Started
+
+1. Clone the repo (now named **Betting Cleanup**) and create a Python 3.11+
+   virtual environment.
+2. Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Populate `data_files/raw/` by running the ingestion cron or manually using
+   the functions in `src/ingestion/`.
+4. Launch the dashboard:
+   ```bash
+   streamlit run predictions.py
+   ```
+5. Train models via the **Models** tab or wait for the automated workflow.
+
+For more details see the docs linked above.

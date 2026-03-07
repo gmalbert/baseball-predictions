@@ -1,0 +1,65 @@
+name: Daily Ingestion
+
+on:
+  schedule:
+    # run each day at 12:00 UTC (morning in US)
+    - cron: '0 12 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run ingestion (season-aware)
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python - <<'PYTHON'
+          from datetime import datetime
+          import sys
+          from src.ingestion.season import in_season
+
+          if not in_season(datetime.utcnow()):
+              print('Outside baseball season; skipping ingestion.\n' +
+                    'Season months are Mar–Nov and year must be within config range.')
+              sys.exit(0)
+
+          # execute each job once; each function is season-guarded too
+          from src.ingestion.scheduler import (
+              morning_data_pull,
+              midday_odds_pull,
+              afternoon_update,
+              overnight_results,
+          )
+
+          morning_data_pull()
+          midday_odds_pull()
+          afternoon_update()
+          overnight_results()
+          PYTHON
+      - name: Train models (season-aware)
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python - <<'PYTHON'
+          from datetime import datetime
+          import sys
+          from src.ingestion.season import in_season
+
+          if not in_season(datetime.utcnow()):
+              print('Outside baseball season; skipping model training.')
+              sys.exit(0)
+
+          # use the helper script
+          from scripts.train_models import main as train_main
+          train_main()
+          PYTHON
