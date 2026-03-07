@@ -11,7 +11,9 @@ from pathlib import Path
 
 # allow imports from the repository root (so "src" is on sys.path)
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+# ensure src/ is checked before ROOT so src/models shadows the root models/ (joblib) folder
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(1, str(ROOT))
 
 from models.features import build_model_features
 from models.underdog_model import train_moneyline_model

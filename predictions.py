@@ -9,9 +9,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).parent.resolve()
-# ensure project root and `src/` directory are on sys.path before any imports
+# ensure src/ is checked before ROOT so src/models shadows the root models/ (joblib) folder
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT))
+sys.path.insert(1, str(ROOT))
 
 from retrosheet import (
     head_to_head,

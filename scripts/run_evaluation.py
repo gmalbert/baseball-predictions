@@ -14,8 +14,9 @@ from pathlib import Path
 
 # ensure repo root is on the path when running as a script
 root = Path(__file__).resolve().parents[1]
+# ensure src/ is checked before ROOT so src/models shadows the root models/ (joblib) folder
 sys.path.insert(0, str(root / "src"))
-sys.path.insert(0, str(root))
+sys.path.insert(1, str(root))
 
 import warnings
 warnings.filterwarnings("ignore")
