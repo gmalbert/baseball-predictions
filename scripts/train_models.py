@@ -13,10 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.models.features import build_model_features
-from src.models.underdog_model import train_moneyline_model
-from src.models.spread_model import train_spread_model
-from src.models.totals_model import train_totals_model
+from models.features import build_model_features
+from models.underdog_model import train_moneyline_model
+from models.spread_model import train_spread_model
+from models.totals_model import train_totals_model
 
 
 def main(start_year: int = 2020, end_year: int = None) -> None:

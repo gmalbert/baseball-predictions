@@ -8,7 +8,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).parent.resolve()
+# ensure project root and `src/` directory are on sys.path before any imports
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from retrosheet import (
     head_to_head,
@@ -21,16 +24,16 @@ from retrosheet import (
     season_team_pitching,
     team_list,
 )
-from src.models.features import build_model_features
-from src.models.underdog_model import train_moneyline_model
-from src.models.spread_model import train_spread_model
-from src.models.totals_model import train_totals_model
+from models.features import build_model_features
+from models.underdog_model import train_moneyline_model
+from models.spread_model import train_spread_model
+from models.totals_model import train_totals_model
 
 # evaluation utilities
-from src.evaluation.backtester import walk_forward_backtest, calculate_profit, BacktestResult
-from src.evaluation.calibration import calibration_plot_data
-from src.evaluation.profitability import profitability_report, edge_filter_analysis
-from src.evaluation.dashboard import generate_dashboard_data
+from evaluation.backtester import walk_forward_backtest, calculate_profit, BacktestResult
+from evaluation.calibration import calibration_plot_data
+from evaluation.profitability import profitability_report, edge_filter_analysis
+from evaluation.dashboard import generate_dashboard_data
 
 from footer import add_betting_oracle_footer
 
@@ -1078,7 +1081,7 @@ with tab_evaluation:
             def _predict_xgb(model, X):
                 return model.predict_proba(X.fillna(0))[:, 1]
 
-            from src.models.features import MONEYLINE_FEATURES, TOTALS_FEATURES
+            from models.features import MONEYLINE_FEATURES, TOTALS_FEATURES
 
             # prepare dataframes (gid → game_id for backtester)
             ml_bt_cols = ["date", "gid", "home_win"] + [

@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 
 # ensure repo root is on the path when running as a script
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(root / "src"))
+sys.path.insert(0, str(root))
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -21,14 +23,14 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-from src.models.features import build_model_features
-from src.models.underdog_model import train_moneyline_model
-from src.models.spread_model import train_spread_model
-from src.models.totals_model import train_totals_model
+from models.features import build_model_features
+from models.underdog_model import train_moneyline_model
+from models.spread_model import train_spread_model
+from models.totals_model import train_totals_model
 
-from src.evaluation.backtester import walk_forward_backtest, BacktestResult
-from src.evaluation.calibration import calibration_report
-from src.evaluation.profitability import (
+from evaluation.backtester import walk_forward_backtest, BacktestResult
+from evaluation.calibration import calibration_report
+from evaluation.profitability import (
     profitability_report,
     edge_filter_analysis,
     monthly_breakdown,

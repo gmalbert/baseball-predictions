@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/gmalbert/betting-oracle/main/data_files/logo.png" width="200" alt="Betting Cleanup logo">
+<img src="https://raw.githubusercontent.com/gmalbert/baseball-predictions/main/data_files/logo.png" width="200" alt="Betting Cleanup logo">
 
 # Betting Cleanup
 
