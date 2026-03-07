@@ -199,9 +199,13 @@ cython_debug/
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 
-# Machine learning artifacts and raw data — only root-level directories
+# Machine learning artifacts and root-level models/ (joblib files)
 /models/
-data_files/
+# Raw pipeline outputs — not needed for the app to run
+data_files/raw/
+data_files/processed/
+# Large source CSVs — app reads .parquet equivalents committed to git
+data_files/retrosheet/*.csv
 #footer.py
 .cursorignore
 .cursorindexingignore

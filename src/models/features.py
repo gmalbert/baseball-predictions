@@ -123,15 +123,10 @@ def _load_sp_season_stats(min_year: int, max_year: int) -> pd.DataFrame:
         "gid", "id", "team", "stattype", "vishome", "gametype",
         "p_gs", "p_ipouts", "p_er", "p_k", "p_w", "p_h", "date",
     ]
-    avail = set(pd.read_csv(raw_dir / "pitching.csv", nrows=0).columns)
-    cols = [c for c in needed_cols if c in avail]
-
-    pitch = pd.read_csv(raw_dir / "pitching.csv", usecols=cols, low_memory=False)
-    pitch = pitch[
-        (pitch["stattype"] == "value")
-        & (pitch["gametype"] == "regular")
-        & (pitch["p_gs"] == 1.0)
-    ].copy()
+    pitch = pd.read_parquet(raw_dir / "pitching.parquet")
+    cols = [c for c in needed_cols if c in pitch.columns]
+    pitch = pitch[cols]
+    pitch = pitch[pitch["p_gs"] == 1.0].copy()
 
     # Parse date / season
     pitch["season"] = pd.to_numeric(

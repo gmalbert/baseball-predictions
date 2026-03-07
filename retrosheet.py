@@ -63,14 +63,7 @@ def load_gameinfo(min_year: int = MODERN_START, max_year: int = 2025) -> pd.Data
     Filters to regular-season games within [min_year, max_year].
     """
     min_year = max(min_year, MODERN_START)
-    cols = [
-        "gid", "visteam", "hometeam", "site", "date", "number",
-        "daynight", "usedh", "innings", "timeofgame", "attendance",
-        "fieldcond", "precip", "sky", "temp", "winddir", "windspeed",
-        "vruns", "hruns", "wteam", "lteam", "gametype", "season",
-    ]
-    df = pd.read_csv(RAW_DIR / "gameinfo.csv", usecols=cols, low_memory=False, on_bad_lines="skip")
-    df = df[df["gametype"] == "regular"].copy()
+    df = pd.read_parquet(RAW_DIR / "gameinfo.parquet")
     df["season"] = pd.to_numeric(df["season"], errors="coerce")
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
     df["date"] = _parse_retrodate(df["date"])
@@ -111,10 +104,8 @@ def load_teamstats(min_year: int = MODERN_START, max_year: int = 2025) -> pd.Dat
     Returns one row per team per game.
     """
     min_year = max(min_year, MODERN_START)
-    available = set(pd.read_csv(RAW_DIR / "teamstats.csv", nrows=0).columns)
-    cols = [c for c in _TEAMSTATS_COLS if c in available]
-    df = pd.read_csv(RAW_DIR / "teamstats.csv", usecols=cols, low_memory=False, on_bad_lines="skip")
-    df = df[(df["stattype"] == "value") & (df["gametype"] == "regular")].copy()
+    df = pd.read_parquet(RAW_DIR / "teamstats.parquet")
+    cols = [c for c in _TEAMSTATS_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
@@ -170,10 +161,8 @@ _BAT_COLS = [
 @st.cache_data(show_spinner=False)
 def load_batting(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    available = set(pd.read_csv(RAW_DIR / "batting.csv", nrows=0).columns)
-    cols = [c for c in _BAT_COLS if c in available]
-    df = pd.read_csv(RAW_DIR / "batting.csv", usecols=cols, low_memory=False, on_bad_lines="skip")
-    df = df[(df["stattype"] == "value") & (df["gametype"] == "regular")].copy()
+    df = pd.read_parquet(RAW_DIR / "batting.parquet")
+    cols = [c for c in _BAT_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
@@ -201,10 +190,8 @@ _PITCH_COLS = [
 @st.cache_data(show_spinner=False)
 def load_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    available = set(pd.read_csv(RAW_DIR / "pitching.csv", nrows=0).columns)
-    cols = [c for c in _PITCH_COLS if c in available]
-    df = pd.read_csv(RAW_DIR / "pitching.csv", usecols=cols, low_memory=False, on_bad_lines="skip")
-    df = df[(df["stattype"] == "value") & (df["gametype"] == "regular")].copy()
+    df = pd.read_parquet(RAW_DIR / "pitching.parquet")
+    cols = [c for c in _PITCH_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
@@ -227,7 +214,7 @@ def load_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> pd.Data
 @st.cache_data(show_spinner=False)
 def load_players(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    df = pd.read_csv(RAW_DIR / "allplayers.csv", low_memory=False)
+    df = pd.read_parquet(RAW_DIR / "allplayers.parquet")
     df["season"] = pd.to_numeric(df["season"], errors="coerce")
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
     df["full_name"] = df["first"] + " " + df["last"]
