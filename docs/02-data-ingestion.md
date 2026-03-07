@@ -50,7 +50,7 @@ baseball-predictions/
 
 ---
 
-## 1. Configuration
+## 1. Configuration  ✅ Completed
 
 ```python
 # src/ingestion/config.py
@@ -88,7 +88,7 @@ config = IngestionConfig()
 
 ---
 
-## 2. MLB Stats API Ingestion
+## 2. MLB Stats API Ingestion  ✅ Completed
 
 ```python
 # src/ingestion/mlb_stats.py
@@ -176,7 +176,7 @@ if __name__ == "__main__":
 
 ---
 
-## 3. pybaseball Stats Ingestion
+## 3. pybaseball Stats Ingestion  ✅ Completed
 
 ```python
 # src/ingestion/pybaseball_stats.py
@@ -268,7 +268,7 @@ if __name__ == "__main__":
 
 ---
 
-## 4. Odds Ingestion
+## 4. Odds Ingestion  ✅ Completed
 
 ```python
 # src/ingestion/odds.py
@@ -369,7 +369,7 @@ if __name__ == "__main__":
 
 ---
 
-## 5. Weather Ingestion
+## 5. Weather Ingestion  ✅ Completed
 
 ```python
 # src/ingestion/weather.py
@@ -716,6 +716,23 @@ if __name__ == "__main__":
 ---
 
 ## 8. Daily Scheduler
+
+### 8.1 Season‑aware execution
+
+The ingestion scheduler only runs when games are being played.  A small
+helper module (`src/ingestion/season.py`) defines `in_season()` which
+returns `True` if the current date is between March and November and the
+year falls within the configured range.  Each APScheduler job calls
+`in_season()` at the top and exits early when out of season, avoiding
+unnecessary API traffic during the winter months.
+
+A GitHub Actions workflow (`.github/workflows/ingestion.yml`) is also
+provided so the same jobs can be triggered in CI.  The scheduled job
+fires daily at noon UTC; the workflow script imports the season helper
+and aborts when outside the baseball window.  You can override the
+cron schedule or dispatch the workflow manually using the "Run workflow"
+button in the Actions tab.
+
 
 ```python
 # src/ingestion/scheduler.py
