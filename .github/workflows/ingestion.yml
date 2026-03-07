@@ -46,6 +46,9 @@ jobs:
           afternoon_update()
           overnight_results()
           PYTHON
+      - name: Pre-compute aggregated datasets
+        run: python scripts/precompute_data.py
+
       - name: Train models (season-aware)
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
