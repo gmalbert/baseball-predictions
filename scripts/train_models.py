@@ -11,14 +11,13 @@ from pathlib import Path
 
 # allow imports from the repository root (so "src" is on sys.path)
 ROOT = Path(__file__).parent.parent
-# ensure src/ is checked before ROOT so src/models shadows the root models/ (joblib) folder
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(1, str(ROOT))
+# ROOT first on sys.path so ROOT/src/ (local package) shadows the PyPI 'src' package
+sys.path.insert(0, str(ROOT))
 
-from models.features import build_model_features
-from models.underdog_model import train_moneyline_model
-from models.spread_model import train_spread_model
-from models.totals_model import train_totals_model
+from src.models.features import build_model_features
+from src.models.underdog_model import train_moneyline_model
+from src.models.spread_model import train_spread_model
+from src.models.totals_model import train_totals_model
 
 
 def main(start_year: int = 2020, end_year: int = None) -> None:

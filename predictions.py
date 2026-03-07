@@ -9,9 +9,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).parent.resolve()
-# ensure src/ is checked before ROOT so src/models shadows the root models/ (joblib) folder
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(1, str(ROOT))
+# ROOT first on sys.path so ROOT/src/ (local package) shadows the PyPI 'src' package
+sys.path.insert(0, str(ROOT))
 
 from retrosheet import (
     head_to_head,
@@ -24,16 +23,16 @@ from retrosheet import (
     season_team_pitching,
     team_list,
 )
-from models.features import build_model_features
-from models.underdog_model import train_moneyline_model
-from models.spread_model import train_spread_model
-from models.totals_model import train_totals_model
+from src.models.features import build_model_features
+from src.models.underdog_model import train_moneyline_model
+from src.models.spread_model import train_spread_model
+from src.models.totals_model import train_totals_model
 
 # evaluation utilities
-from evaluation.backtester import walk_forward_backtest, calculate_profit, BacktestResult
-from evaluation.calibration import calibration_plot_data
-from evaluation.profitability import profitability_report, edge_filter_analysis
-from evaluation.dashboard import generate_dashboard_data
+from src.evaluation.backtester import walk_forward_backtest, calculate_profit, BacktestResult
+from src.evaluation.calibration import calibration_plot_data
+from src.evaluation.profitability import profitability_report, edge_filter_analysis
+from src.evaluation.dashboard import generate_dashboard_data
 
 from footer import add_betting_oracle_footer
 
