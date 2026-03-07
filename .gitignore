@@ -203,7 +203,6 @@ cython_debug/
 /models/
 # Raw pipeline outputs — not needed for the app to run
 data_files/raw/
-data_files/processed/
 # Large source CSVs — app reads .parquet equivalents committed to git
 data_files/retrosheet/*.csv
 #footer.py

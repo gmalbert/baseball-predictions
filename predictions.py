@@ -16,12 +16,7 @@ from retrosheet import (
     head_to_head,
     load_gameinfo,
     rolling_team_form,
-    season_batting_leaders,
-    season_pitching_leaders,
-    season_standings,
-    season_team_batting,
-    season_team_pitching,
-    team_list,
+    TEAM_NAMES,
 )
 from src.models.features import build_model_features
 from src.models.underdog_model import train_moneyline_model
@@ -37,10 +32,102 @@ from src.evaluation.dashboard import generate_dashboard_data
 from footer import add_betting_oracle_footer
 
 
+PROCESSED = ROOT / "data_files" / "processed"
+
+
 @st.cache_data(show_spinner=False)
-def _cached_build_features(min_year: int, max_year: int) -> pd.DataFrame:
-    """Cached wrapper so feature matrix is only rebuilt when year range changes."""
-    return build_model_features(min_year, max_year)
+def _load_precomputed() -> dict:
+    """Load all pre-computed aggregated datasets once at startup.
+
+    Returns a dict of DataFrames covering the full historical range.
+    Year filtering happens in-memory after the sidebar slider fires — instant.
+    """
+    gi = pd.read_parquet(ROOT / "data_files" / "retrosheet" / "gameinfo.parquet")
+    return {
+        "gameinfo":        gi,
+        "standings":       pd.read_parquet(PROCESSED / "standings.parquet"),
+        "team_batting":    pd.read_parquet(PROCESSED / "team_batting.parquet"),
+        "team_pitching":   pd.read_parquet(PROCESSED / "team_pitching.parquet"),
+        "batting_leaders": pd.read_parquet(PROCESSED / "batting_leaders.parquet"),
+        "pitching_leaders":pd.read_parquet(PROCESSED / "pitching_leaders.parquet"),
+        "model_features":  pd.read_parquet(PROCESSED / "model_features.parquet"),
+    }
+
+
+@st.cache_data(show_spinner=False)
+def _load_model_results() -> dict | None:
+    """Reconstruct model training results from pre-computed parquet files.
+
+    Returns None if the files haven't been generated yet (pre-first run).
+    """
+    try:
+        metrics_df = pd.read_parquet(PROCESSED / "model_metrics.parquet")
+        imps_df    = pd.read_parquet(PROCESSED / "model_importances.parquet")
+        results = {}
+        for model_name in ["moneyline", "spread", "totals"]:
+            row     = metrics_df[metrics_df["model"] == model_name].iloc[0]
+            test_df = pd.read_parquet(PROCESSED / f"{model_name}_test_df.parquet")
+            results[model_name] = {
+                "model":       None,   # .joblib not needed for display
+                "metrics": {
+                    "roc_auc":     float(row["roc_auc"]),
+                    "accuracy":    float(row["accuracy"]),
+                    "brier_score": float(row["brier_score"]),
+                    "log_loss":    float(row["log_loss"]),
+                },
+                "importances": (
+                    imps_df[imps_df["model"] == model_name][["feature", "importance"]]
+                    .reset_index(drop=True)
+                ),
+                "feature_cols": [],
+                "test_df":     test_df,
+                "train_size":  int(row["train_size"]),
+                "test_size":   int(row["test_size"]),
+            }
+        return results
+    except FileNotFoundError:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_eval_backtests() -> dict | None:
+    """Reconstruct BacktestResult objects from pre-computed parquet files.
+
+    Returns None if the files haven't been generated yet (pre-first run).
+    """
+    try:
+        from src.evaluation.backtester import BacktestResult, BetResult
+        bets_df    = pd.read_parquet(PROCESSED / "backtest_bets.parquet")
+        summary_df = pd.read_parquet(PROCESSED / "backtest_summary.parquet")
+        backtests  = {}
+        for model_name in ["moneyline", "totals"]:
+            subset = bets_df[bets_df["model_name"] == model_name]
+            s_row  = summary_df[summary_df["model"] == model_name].iloc[0]
+            bets   = [
+                BetResult(
+                    game_id=row.game_id,
+                    date=row.date,
+                    pick_type=row.pick_type,
+                    pick_value="",
+                    predicted_prob=float(row.predicted_prob),
+                    confidence_score=float(row.confidence_score),
+                    confidence=row.confidence,
+                    edge=float(row.edge),
+                    american_odds=int(row.american_odds),
+                    result=row.result,
+                    profit_units=float(row.profit_units),
+                )
+                for row in subset.itertuples(index=False)
+            ]
+            backtests[model_name] = BacktestResult(
+                model_name=model_name,
+                pick_type=str(s_row["pick_type"]),
+                period=str(s_row["period"]),
+                bets=bets,
+            )
+        return backtests
+    except FileNotFoundError:
+        return None
 
 # Human-readable column header mapping for all st.dataframe() displays
 READABLE_COLS: dict[str, str] = {
@@ -112,6 +199,11 @@ st.markdown(css, unsafe_allow_html=True)
 st.title("⚾ Baseball Predictions")
 
 # ─────────────────────────────────────────────
+# Pre-load all data once (runs at startup, cached permanently)
+# ─────────────────────────────────────────────
+_pre = _load_precomputed()
+
+# ─────────────────────────────────────────────
 # Sidebar – global filters
 # ─────────────────────────────────────────────
 with st.sidebar:
@@ -125,13 +217,34 @@ with st.sidebar:
     )
     st.caption(f"Using {min_year}–{max_year} regular-season games.")
 
-with st.spinner("Loading data… (first load only — subsequent loads are instant)"):
-    teams     = team_list(min_year, max_year)
-    standings = season_standings(min_year, max_year)
-    tbat      = season_team_batting(min_year, max_year)
-    tpitch    = season_team_pitching(min_year, max_year)
-    bleaders  = season_batting_leaders(min_year, max_year)
-    pleaders  = season_pitching_leaders(min_year, max_year)
+# Filter in-memory — instant regardless of year selection
+def _yr(df: pd.DataFrame) -> pd.DataFrame:
+    return df[df["season"].between(min_year, max_year)].copy()
+
+_gi      = _yr(_pre["gameinfo"])
+standings = _yr(_pre["standings"])
+tbat      = _yr(_pre["team_batting"])
+tpitch    = _yr(_pre["team_pitching"])
+bleaders  = _yr(_pre["batting_leaders"])
+pleaders  = _yr(_pre["pitching_leaders"])
+features_df = _yr(_pre["model_features"])
+def _code_to_name(c: str) -> str:
+    return TEAM_NAMES.get(str(c).upper(), c)
+
+teams     = sorted(set(
+    _gi["visteam"].dropna().map(_code_to_name)
+) | set(
+    _gi["hometeam"].dropna().map(_code_to_name)
+))
+
+# ─────────────────────────────────────────────
+# Session state — pre-populate from precomputed results on first load
+# ─────────────────────────────────────────────
+if "ml_results" not in st.session_state:
+    st.session_state["ml_results"] = _load_model_results()
+    st.session_state["ml_feat_df"] = features_df
+if "eval_backtests" not in st.session_state:
+    st.session_state["eval_backtests"] = _load_eval_backtests()
 
 (
     tab_standings,
@@ -218,7 +331,8 @@ with tab_standings:
 
     st.markdown("#### Win % Trend — Select Teams")
     top_teams = standings.groupby("team")["WPct"].mean().nlargest(10).index.tolist()
-    team_filter = st.multiselect("Select teams", teams, default=top_teams[:6], key="trend_teams")
+    standings_teams = sorted(standings["team"].unique())
+    team_filter = st.multiselect("Select teams", standings_teams, default=top_teams[:6], key="trend_teams")
     if team_filter:
         trend_df = standings[standings["team"].isin(team_filter)]
         fig3 = px.line(
@@ -584,8 +698,7 @@ with tab_features:
         "Feature matrix built from season-level stats — designed as inputs for ML models."
     )
 
-    with st.spinner("Loading standings for feature builder…"):
-        all_standings = season_standings(min_year, max_year)
+    all_standings = _pre["standings"]
 
     feat_season = st.selectbox(
         "Season",
@@ -764,20 +877,11 @@ with tab_models:
         """
     )
 
-    # ── Train controls ────────────────────────────────────────────────────────
-    col_ctrl_a, col_ctrl_b, col_ctrl_c = st.columns([1, 1, 3])
-    use_lgbm = col_ctrl_a.checkbox("Use LightGBM for O/U", value=False)
-    train_btn = col_ctrl_b.button("🚀 Train / Refresh Models", type="primary")
+    use_lgbm = False  # reserved for future admin re-train
 
-    # Store in session state so models survive tab switches
-    if "ml_results" not in st.session_state:
-        st.session_state["ml_results"] = None
-    if "ml_feat_df" not in st.session_state:
-        st.session_state["ml_feat_df"] = None
-
-    if train_btn:
+    if False:  # re-train disabled; models are pre-loaded at startup
         with st.spinner("Building feature matrix…"):
-            ml_df = _cached_build_features(min_year, max_year)
+            ml_df = features_df
             st.session_state["ml_feat_df"] = ml_df
 
         prog = st.progress(0, text="Training moneyline model…")
@@ -801,7 +905,7 @@ with tab_models:
 
     results = st.session_state["ml_results"]
     if results is None:
-        st.info("Click **Train / Refresh Models** to build the feature matrix and train all three models.")
+        st.info("Pre-trained results not found. Click **Re-train Models** above to train all three models.")
     else:
         # ── Model metrics ─────────────────────────────────────────────────────────
         st.markdown("### Model Performance (test set)")
@@ -1050,80 +1154,72 @@ with tab_evaluation:
         """
     )
 
-    if "eval_backtests" not in st.session_state:
-        st.session_state["eval_backtests"] = None
+    if False:  # re-run disabled; evaluation is pre-loaded at startup
+        feat_df = st.session_state["ml_feat_df"].copy()
+        # use same backtest logic as script but simpler for UI
+        from xgboost import XGBClassifier
 
-    run_btn = st.button("🔁 Run Evaluation")
-
-    if run_btn:
-        if results is None or st.session_state.get("ml_feat_df") is None:
-            st.warning("Please train models first in the Models tab.")
-        else:
-            feat_df = st.session_state["ml_feat_df"].copy()
-            # use same backtest logic as script but simpler for UI
-            from xgboost import XGBClassifier
-
-            def _train_xgb(X, y):
-                clf = XGBClassifier(
-                    n_estimators=150,
-                    max_depth=4,
-                    learning_rate=0.05,
-                    subsample=0.8,
-                    colsample_bytree=0.8,
-                    eval_metric="logloss",
-                    random_state=42,
-                    verbosity=0,
-                )
-                clf.fit(X.fillna(0), y)
-                return clf
-
-            def _predict_xgb(model, X):
-                return model.predict_proba(X.fillna(0))[:, 1]
-
-            from models.features import MONEYLINE_FEATURES, TOTALS_FEATURES
-
-            # prepare dataframes (gid → game_id for backtester)
-            ml_bt_cols = ["date", "gid", "home_win"] + [
-                c for c in MONEYLINE_FEATURES if c in feat_df.columns
-            ]
-            ml_bt = feat_df[ml_bt_cols].rename(columns={"gid": "game_id"}).dropna()
-            tot_bt_cols = ["date", "gid", "went_over"] + [
-                c for c in TOTALS_FEATURES if c in feat_df.columns
-            ]
-            tot_bt = feat_df[tot_bt_cols].rename(columns={"gid": "game_id"}).dropna()
-
-            ml_backtest = walk_forward_backtest(
-                features_df=ml_bt,
-                train_fn=_train_xgb,
-                predict_fn=_predict_xgb,
-                target_col="home_win",
-                odds_col="home_ml",
-                pick_type="underdog",
-                model_name="moneyline",
-                min_edge=0.02,
-                train_window_games=1200,
-                test_window_games=200,
-                step_size=100,
+        def _train_xgb(X, y):
+            clf = XGBClassifier(
+                n_estimators=150,
+                max_depth=4,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                eval_metric="logloss",
+                random_state=42,
+                verbosity=0,
             )
-            tot_backtest = walk_forward_backtest(
-                features_df=tot_bt,
-                train_fn=_train_xgb,
-                predict_fn=_predict_xgb,
-                target_col="went_over",
-                odds_col="total_line",
-                pick_type="over_under",
-                model_name="totals",
-                min_edge=0.02,
-                train_window_games=1200,
-                test_window_games=200,
-                step_size=100,
-            )
+            clf.fit(X.fillna(0), y)
+            return clf
 
-            st.session_state["eval_backtests"] = {
-                "moneyline": ml_backtest,
-                "totals": tot_backtest,
-            }
-            st.success("Evaluation complete. Scroll down to view results.")
+        def _predict_xgb(model, X):
+            return model.predict_proba(X.fillna(0))[:, 1]
+
+        from src.models.features import MONEYLINE_FEATURES, TOTALS_FEATURES
+
+        # prepare dataframes (gid → game_id for backtester)
+        ml_bt_cols = ["date", "gid", "home_win"] + [
+            c for c in MONEYLINE_FEATURES if c in feat_df.columns
+        ]
+        ml_bt = feat_df[ml_bt_cols].rename(columns={"gid": "game_id"}).dropna()
+        tot_bt_cols = ["date", "gid", "went_over"] + [
+            c for c in TOTALS_FEATURES if c in feat_df.columns
+        ]
+        tot_bt = feat_df[tot_bt_cols].rename(columns={"gid": "game_id"}).dropna()
+
+        ml_backtest = walk_forward_backtest(
+            features_df=ml_bt,
+            train_fn=_train_xgb,
+            predict_fn=_predict_xgb,
+            target_col="home_win",
+            odds_col="home_ml",
+            pick_type="underdog",
+            model_name="moneyline",
+            min_edge=0.02,
+            train_window_games=1200,
+            test_window_games=200,
+            step_size=100,
+        )
+        tot_backtest = walk_forward_backtest(
+            features_df=tot_bt,
+            train_fn=_train_xgb,
+            predict_fn=_predict_xgb,
+            target_col="went_over",
+            odds_col="total_line",
+            pick_type="over_under",
+            model_name="totals",
+            min_edge=0.02,
+            train_window_games=1200,
+            test_window_games=200,
+            step_size=100,
+        )
+
+        st.session_state["eval_backtests"] = {
+            "moneyline": ml_backtest,
+            "totals": tot_backtest,
+        }
+        st.success("Evaluation complete. Scroll down to view results.")
 
     if st.session_state["eval_backtests"]:
         # show leaderboard
