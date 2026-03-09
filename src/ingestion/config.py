@@ -9,7 +9,7 @@ class IngestionConfig:
     """Central config for all ingestion jobs."""
 
     # Date range
-    start_year: int = 2021
+    start_year: int = 2020
     end_year: int = 2025
 
     # Paths

@@ -1,6 +1,8 @@
 # 07 – Data Access Layer
 
-A Python data-access module that reads Parquet/CSV files and serves data to the Streamlit dashboard. An optional FastAPI layer is included if you later need a REST API.
+A Python data-access module that reads Parquet/CSV files and serves data to the Streamlit dashboard. An optional FastAPI layer is included if you later need a REST API.  
+
+> **Status:** ❌ *Not yet implemented – no `src/data` or `src/api` packages exist in the codebase.*
 
 ---
 
@@ -8,12 +10,12 @@ A Python data-access module that reads Parquet/CSV files and serves data to the 
 
 ```
 src/
-├── data/
+├── data/  ❌ missing in repo
 │   ├── __init__.py
 │   ├── schemas.py        # Parquet schemas (from 03-database-schema.md)
 │   ├── queries.py        # High-level data query functions
 │   └── cache.py          # Simple caching for Streamlit
-├── api/                  # Optional: FastAPI REST endpoints
+├── api/                  # Optional: FastAPI REST endpoints (❌ not present)
 │   ├── __init__.py
 │   ├── main.py
 │   └── routers/
@@ -23,7 +25,9 @@ src/
 
 ---
 
-## 1. Data Query Functions
+## 1. Data Query Functions  
+
+> **Status:** ❌ *Blueprint only; `src/data/queries.py` does not exist.*
 
 The primary data access layer — reads from Parquet files and returns DataFrames ready for Streamlit.
 
@@ -211,7 +215,9 @@ def get_confidence_breakdown(days: int = 30) -> pd.DataFrame:
 
 ---
 
-## 2. Streamlit Caching Layer
+## 2. Streamlit Caching Layer  
+
+> **Status:** ❌ *Blueprint only; no cache module present.*
 
 ```python
 # src/data/cache.py
@@ -266,7 +272,9 @@ def cached_confidence_breakdown(days=30):
 
 ---
 
-## 3. Optional: FastAPI REST API
+## 3. Optional: FastAPI REST API  
+
+> **Status:** ❌ *Entire FastAPI layer remains unimplemented.*
 
 If external consumers (mobile app, third-party integrations) need JSON endpoints, add a thin FastAPI layer on top of the same query functions.
 
@@ -362,4 +370,6 @@ uvicorn src.api.main:app --reload --port 8000
 
 ---
 
-> **Next:** [08-frontend-layout.md](08-frontend-layout.md) – Streamlit dashboard design and implementation.
+> **Next:** [08-frontend-layout.md](08-frontend-layout.md) – Streamlit dashboard design and implementation.  
+
+> _Note: before building the dashboard, the data access layer described above needs to be coded or alternative queries written inline._
