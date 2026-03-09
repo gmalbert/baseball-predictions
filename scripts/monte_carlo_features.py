@@ -215,9 +215,22 @@ def _load_savant_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     pit_path = RAW_DIR / "pitching" / "savant_pitcher_2020_2025.csv"
 
     if not bat_path.exists() or not pit_path.exists():
-        raise FileNotFoundError(
-            "Run scripts/fetch_savant_leaderboards.py first to download CSVs."
-        )
+        # If the CSVs are missing, try to download them automatically. This makes
+        # the script more self-sufficient (useful for GH workflows and local
+        # runs) and avoids the hard error seen in CI.
+        logger.warning("Savant leaderboard CSVs not found; attempting download...")
+        try:
+            from src.ingestion.savant_leaderboard import fetch_all_savant_leaderboards
+
+            fetch_all_savant_leaderboards()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Automatic download failed: %s", exc)
+
+        # re-check after attempted download
+        if not bat_path.exists() or not pit_path.exists():
+            raise FileNotFoundError(
+                "Run scripts/fetch_savant_leaderboards.py first to download CSVs."
+            )
 
     bat = pd.read_csv(bat_path)
     pit = pd.read_csv(pit_path)

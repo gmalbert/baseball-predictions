@@ -27,6 +27,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Download Savant leaderboards
+        run: python scripts/fetch_savant_leaderboards.py
+
       - name: Run Monte Carlo feature selection (1 000 trials)
         run: python scripts/monte_carlo_features.py --trials 1000
 
