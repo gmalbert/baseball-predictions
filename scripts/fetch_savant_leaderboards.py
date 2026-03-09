@@ -14,6 +14,13 @@ Adjust the `YEARS` list if you need a different range.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# allow running the script directly even when src isn't on PYTHONPATH
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from src.ingestion.savant_leaderboard import fetch_all_savant_leaderboards
 
 # Inclusive range 2020–2025 — all fetched in 2 HTTP requests total
