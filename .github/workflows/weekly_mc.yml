@@ -48,7 +48,8 @@ jobs:
             data_files/processed/moneyline_savant_test_df.parquet \
             data_files/processed/spread_savant_test_df.parquet \
             data_files/processed/totals_savant_test_df.parquet \
-            models/
+            # models/ may be gitignored globally; force-add so workflow can commit them
+            -f models/
           # Only commit when something actually changed
           git diff --cached --quiet || \
             git commit -m "chore: weekly MC + Savant model rebuild [skip ci]"
