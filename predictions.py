@@ -7,6 +7,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+# NOTE: `st.plotly_chart` and `st.dataframe` now accept a `width` argument
+#       (use `'stretch'` in place of the old `use_container_width=True`, or
+#       `'content'` for the opposite).  This prevents legend overlap and
+#       is the preferred API going forward.
 
 ROOT = Path(__file__).parent.resolve()
 # ROOT first on sys.path so ROOT/src/ (local package) shadows the PyPI 'src' package
@@ -34,6 +38,31 @@ from footer import add_betting_oracle_footer
 
 PROCESSED = ROOT / "data_files" / "processed"
 
+def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
+    """
+    Calculate the optimal height for a Streamlit dataframe based on number of rows.
+    
+    Args:
+        df (pd.DataFrame): The dataframe to display
+        row_height (int): Height per row in pixels. Default: 35
+        header_height (int): Height of header row in pixels. Default: 38
+        padding (int): Extra padding in pixels. Default: 2
+        max_height (int): Maximum height cap in pixels. Default: 600 (None for no limit)
+    
+    Returns:
+        int: Calculated height in pixels
+    
+    Example:
+        height = get_dataframe_height(my_df)
+        st.dataframe(my_df, height=height)
+    """
+    num_rows = len(df)
+    calculated_height = (num_rows * row_height) + header_height + padding
+    
+    if max_height is not None:
+        return min(calculated_height, max_height)
+    return calculated_height
+
 
 @st.cache_data(show_spinner=False)
 def _load_precomputed() -> dict:
@@ -43,6 +72,23 @@ def _load_precomputed() -> dict:
     Year filtering happens in-memory after the sidebar slider fires — instant.
     """
     gi = pd.read_parquet(ROOT / "data_files" / "retrosheet" / "gameinfo.parquet")
+
+    mc_ranking: pd.DataFrame | None = None
+    mc_trials: pd.DataFrame | None = None
+    ranking_path = PROCESSED / "mc_feature_ranking.csv"
+    trials_path  = PROCESSED / "mc_feature_trials.parquet"
+    if ranking_path.exists():
+        mc_ranking = pd.read_csv(ranking_path)
+    if trials_path.exists():
+        mc_trials = pd.read_parquet(trials_path)
+
+    savant_metrics: pd.DataFrame | None = None
+    savant_imps: pd.DataFrame | None = None
+    if (PROCESSED / "savant_model_metrics.parquet").exists():
+        savant_metrics = pd.read_parquet(PROCESSED / "savant_model_metrics.parquet")
+    if (PROCESSED / "savant_model_importances.parquet").exists():
+        savant_imps = pd.read_parquet(PROCESSED / "savant_model_importances.parquet")
+
     return {
         "gameinfo":        gi,
         "standings":       pd.read_parquet(PROCESSED / "standings.parquet"),
@@ -51,6 +97,10 @@ def _load_precomputed() -> dict:
         "batting_leaders": pd.read_parquet(PROCESSED / "batting_leaders.parquet"),
         "pitching_leaders":pd.read_parquet(PROCESSED / "pitching_leaders.parquet"),
         "model_features":  pd.read_parquet(PROCESSED / "model_features.parquet"),
+        "mc_ranking":      mc_ranking,
+        "mc_trials":       mc_trials,
+        "savant_metrics":  savant_metrics,
+        "savant_imps":     savant_imps,
     }
 
 
@@ -183,7 +233,7 @@ READABLE_COLS: dict[str, str] = {
 mode = "light"
 
 st.set_page_config(
-    page_title="Baseball Predictions",
+    page_title="Betting Cleanup - Baseball Predictions",
     page_icon="⚾",
     layout="wide",
 )
@@ -195,8 +245,8 @@ css = """
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
-
-st.title("⚾ Baseball Predictions")
+st.image(str(ROOT / "data_files" / "logo.png"), width=150)
+# st.title("⚾ Baseball Predictions")
 
 # ─────────────────────────────────────────────
 # Pre-load all data once (runs at startup, cached permanently)
@@ -257,6 +307,7 @@ if "eval_backtests" not in st.session_state:
     tab_features,
     tab_models,
     tab_evaluation,
+    tab_savant,
 ) = st.tabs([
     "📊 Standings",
     "🏏 Team Batting",
@@ -268,6 +319,7 @@ if "eval_backtests" not in st.session_state:
     "🧮 Betting Features",
     "🤖 Models",
     "📊 Evaluation",
+    "🔬 Savant Research",
 ])
 
 
@@ -1030,11 +1082,11 @@ with tab_models:
             st.plotly_chart(fig, width="stretch")
     
         with dist_tab_ml:
-            _prob_dist_chart("moneyline", "pred_prob", "P(home win)")
+            _prob_dist_chart("moneyline", "pred_prob", "Model predicted probability (home win)")
         with dist_tab_sp:
-            _prob_dist_chart("spread", "pred_prob", "P(home covers −1.5)")
+            _prob_dist_chart("spread", "pred_prob", "Model predicted probability (home covers −1.5)")
         with dist_tab_ou:
-            _prob_dist_chart("totals", "pred_prob_over", "P(went over)")
+            _prob_dist_chart("totals", "pred_prob_over", "Model predicted probability (went over)")
     
         # ── Calibration curves ────────────────────────────────────────────────────
         st.markdown("### Calibration: Predicted vs Actual Win Rate")
@@ -1064,7 +1116,7 @@ with tab_models:
             st.plotly_chart(fig, width="stretch")
     
         with cal_tab_ml:
-            _calibration_chart("moneyline", "pred_prob", "home_win", "P(home win)")
+            _calibration_chart("moneyline", "pred_prob", "home_win", "Model predicted probability (home win)")
         with cal_tab_sp:
             _calibration_chart("spread", "pred_prob", "home_cover", "P(cover −1.5)")
         with cal_tab_ou:
@@ -1095,13 +1147,19 @@ with tab_models:
     
         if "correct" in bt_df.columns:
             bt_df["correct"] = bt_df["correct"].astype(bool).map({True: "✔", False: ""})
-    
+
+        # show actual outcomes as checkmarks rather than raw 0/1
+        for col in ("home_win", "home_cover", "went_over"):
+            if col in bt_df.columns:
+                bt_df[col] = bt_df[col].astype(bool).map({True: "✔", False: ""})
+
+        # choose which columns to display depending on model type
         if bt_model == "moneyline":
             display_cols = {
                 "date": "Date", "hometeam": "Home", "visteam": "Away",
                 "hruns": "H Runs", "vruns": "V Runs",
                 "home_win": "Actually Won?",
-                "pred_prob": "P(home win)", "pred_win": "Model Pick", "correct": "Correct?",
+                "pred_prob": "Predicted home-win probability", "pred_win": "Model Pick", "correct": "Correct?",
             }
         elif bt_model == "spread":
             display_cols = {
@@ -1252,6 +1310,317 @@ with tab_evaluation:
             fig.add_shape(type="line", x0=0, y0=0, x1=1, y1=1,
                           line=dict(dash="dot", color="gray"))
             st.plotly_chart(fig, width="stretch")
+
+
+# ══════════════════════════════════════════════
+# TAB 11 — Savant Research (Monte Carlo Feature Selection)
+# ══════════════════════════════════════════════
+with tab_savant:
+    st.subheader("Savant Feature Research — Monte Carlo Selection")
+    st.markdown(
+        "Results of a Monte Carlo search over Baseball Savant advanced metrics. "
+        "1,000 random trials were run, each sampling a random subset of batter and pitcher "
+        "Savant columns, training XGBoost with TimeSeriesSplit cross-validation across three "
+        "bet targets (moneyline, run line, total). Features are ranked by how often they "
+        "appeared in the **top 10% of trials by ROC-AUC**."
+    )
+
+    mc_ranking = _pre.get("mc_ranking")
+    mc_trials  = _pre.get("mc_trials")
+    savant_metrics = _pre.get("savant_metrics")
+    savant_imps    = _pre.get("savant_imps")
+
+    if mc_ranking is None or mc_ranking.empty:
+        st.info(
+            "Monte Carlo results not found. "
+            "Run `python scripts/monte_carlo_features.py --trials 1000` to generate them."
+        )
+    else:
+        # ── Summary metrics ───────────────────────────────────────────────
+        n_valid = len(mc_trials) if mc_trials is not None else "—"
+        top_cutoff = mc_trials["mean_auc"].quantile(0.90) if mc_trials is not None else None
+
+        BASELINE_AUC = {"moneyline": 0.6253, "spread": 0.6304, "totals": 0.6157}
+
+        col_m, col_s, col_t, col_v = st.columns(4)
+        col_m.metric("Baseline Moneyline AUC", f"{BASELINE_AUC['moneyline']:.4f}",
+                     help="Retrosheet-only features, no Savant")
+        col_s.metric("Baseline Spread AUC",    f"{BASELINE_AUC['spread']:.4f}",
+                     help="Retrosheet-only features, no Savant")
+        col_t.metric("Baseline Totals AUC",    f"{BASELINE_AUC['totals']:.4f}",
+                     help="Retrosheet-only features, no Savant")
+        col_v.metric("Valid Trials", f"{n_valid:,}" if isinstance(n_valid, int) else n_valid,
+                     help="Trials with ≥500 rows after joining Savant to game data")
+
+        # ── Savant-enriched model performance ─────────────────────────────
+        if savant_metrics is not None and not savant_metrics.empty:
+            st.markdown("---")
+            st.markdown("#### Savant-Enriched Model Performance")
+            # st.caption(
+            #     "Trained with top MC-ranked Savant features merged onto the Retrosheet baseline. "
+            #     "Rebuilds every Monday via GitHub Actions → `build_savant_model.py`."
+            # )
+            perf_cols = st.columns(3)
+            for i, model_name in enumerate(["moneyline", "spread", "totals"]):
+                row = savant_metrics[savant_metrics["model"] == model_name]
+                if row.empty:
+                    continue
+                row = row.iloc[0]
+                auc      = float(row["roc_auc"])
+                baseline = BASELINE_AUC[model_name]
+                delta    = auc - baseline
+                perf_cols[i].metric(
+                    label=f"{model_name.capitalize()} AUC (Savant)",
+                    value=f"{auc:.4f}",
+                    delta=f"{delta:+.4f} vs baseline",
+                    delta_color="normal",
+                )
+
+            row0 = savant_metrics.iloc[0]
+            with st.expander("Features used in Savant model"):
+                bat_used = str(row0.get("savant_bat_features", "")).split(",")
+                pit_used = str(row0.get("savant_pit_features", "")).split(",")
+                c1, c2 = st.columns(2)
+                c1.markdown("**Batter features**")
+                for f in bat_used:
+                    c1.markdown(f"- `{f.strip()}`")
+                c2.markdown("**Pitcher features**")
+                for f in pit_used:
+                    c2.markdown(f"- `{f.strip()}`")
+
+            if savant_imps is not None and not savant_imps.empty:
+                st.markdown("##### Feature Importances — Top 20 per model")
+                imp_tabs = st.tabs(["Moneyline", "Spread", "Totals"])
+                for tab_i, model_name in zip(imp_tabs, ["moneyline", "spread", "totals"]):
+                    with tab_i:
+                        df_imp = savant_imps[savant_imps["model"] == model_name].nlargest(20, "importance")
+                        fig_imp = px.bar(
+                            df_imp.sort_values("importance"),
+                            x="importance", y="feature",
+                            orientation="h",
+                            title=f"{model_name.capitalize()} — Savant model feature importance",
+                            labels={"importance": "XGBoost Importance", "feature": "Feature"},
+                            color="importance",
+                            color_continuous_scale="Viridis",
+                        )
+                        fig_imp.update_layout(coloraxis_showscale=False, height=480)
+                        st.plotly_chart(fig_imp, width='stretch')
+        else:
+            st.info(
+                "Savant model not yet built. "
+                "Run `python scripts/build_savant_model.py` after the MC run to train it."
+            )
+
+        # ── AUC distribution across MC trials ─────────────────────────────
+        if mc_trials is not None:
+            st.markdown("---")
+            st.markdown("#### AUC Distribution Across All MC Trials")
+            auc_plot_cols = [c for c in mc_trials.columns if c.endswith("_auc") and c != "mean_auc"]
+            auc_long = mc_trials[auc_plot_cols + ["mean_auc"]].melt(var_name="target", value_name="auc")
+            auc_long["target"] = auc_long["target"].str.replace("_auc", "").str.capitalize()
+            fig_dist = px.box(
+                auc_long[auc_long["target"] != "Mean"],
+                x="target", y="auc",
+                color="target",
+                points=False,
+                title="Trial AUC by Bet Target (1,000 trials)",
+                labels={"target": "Bet Target", "auc": "ROC-AUC"},
+                color_discrete_map={
+                    "Moneyline": "#636EFA",
+                    "Spread":    "#EF553B",
+                    "Totals":    "#00CC96",
+                },
+            )
+            for target_name, baseline in [
+                ("Moneyline", BASELINE_AUC["moneyline"]),
+                ("Spread",    BASELINE_AUC["spread"]),
+                ("Totals",    BASELINE_AUC["totals"]),
+            ]:
+                fig_dist.add_hline(
+                    y=baseline, line_dash="dot", line_color="gray",
+                    annotation_text=f"{target_name} baseline",
+                    annotation_position="right",
+                )
+            # move legend below plot to avoid overlap with data
+            fig_dist.update_layout(
+                legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
+                margin=dict(b=80),
+            )
+            st.plotly_chart(fig_dist, width='stretch')
+
+        # ── Feature ranking charts ────────────────────────────────────────
+        st.markdown("---")
+        bat_ranks = mc_ranking[mc_ranking["type"] == "batter"].head(20).copy()
+        pit_ranks = mc_ranking[mc_ranking["type"] == "pitcher"].head(20).copy()
+
+        bat_ranks["appearance_pct"] = bat_ranks["appearance_rate"] * 100
+        pit_ranks["appearance_pct"] = pit_ranks["appearance_rate"] * 100
+
+        st.markdown("#### Top Batter Features (by appearance in top-10% trials)")
+        fig_bat = px.bar(
+            bat_ranks.sort_values("appearance_pct"),
+            x="appearance_pct", y="feature",
+            orientation="h",
+            title="Batter Feature Selection Frequency",
+            labels={"appearance_pct": "Appearance Rate in Top Trials (%)", "feature": "Savant Column"},
+            color="appearance_pct",
+            color_continuous_scale="Blues",
+        )
+        fig_bat.update_layout(coloraxis_showscale=False, height=500)
+        st.plotly_chart(fig_bat, width='stretch')
+
+        st.markdown("#### Top Pitcher Features (by appearance in top-10% trials)")
+        fig_pit = px.bar(
+            pit_ranks.sort_values("appearance_pct"),
+            x="appearance_pct", y="feature",
+            orientation="h",
+            title="Pitcher Feature Selection Frequency",
+            labels={"appearance_pct": "Appearance Rate in Top Trials (%)", "feature": "Savant Column"},
+            color="appearance_pct",
+            color_continuous_scale="Reds",
+        )
+        fig_pit.update_layout(coloraxis_showscale=False, height=500)
+        st.plotly_chart(fig_pit, width='stretch')
+
+        # ── Full ranking table ────────────────────────────────────────────
+        with st.expander("Full feature ranking table"):
+            display_rank = mc_ranking.copy()
+            display_rank["appearance_rate"] = (display_rank["appearance_rate"] * 100).round(1)
+            display_rank = display_rank.rename(columns={
+                "feature":               "Savant Column",
+                "type":                  "Type",
+                "top_trial_appearances": "Appearances in Top Trials",
+                "appearance_rate":       "Rate (%)",
+            })
+            st.dataframe(display_rank, hide_index=True, width='stretch')
+
+        # ── Data dictionary ───────────────────────────────────────────────
+        with st.expander("📖  Data dictionary — all Savant columns"):
+            st.markdown("All columns below can appear as batter stats (stat earned) "
+                        "or pitcher stats (stat allowed), except where noted.")
+            dict_data = [
+                # Expected stats
+                ("xba",                    "both",    "Expected Batting Average based on exit velocity + launch angle; removes park and defense bias."),
+                ("xslg",                   "both",    "Expected Slugging Percentage based on quality of contact."),
+                ("xwoba",                  "both",    "Expected Weighted On-Base Average — comprehensive offensive value, contact-quality adjusted."),
+                ("xobp",                   "both",    "Expected On-Base Percentage."),
+                ("xiso",                   "both",    "Expected Isolated Power (xSLG − xBA)."),
+                ("xera",                   "pitcher", "Expected ERA based on contact quality allowed; strips out sequencing and BABIP luck."),
+                ("wobacon",                "both",    "wOBA on contact only — excludes walks and strikeouts."),
+                ("xwobacon",               "both",    "Expected wOBA on contact."),
+                ("bacon",                  "both",    "Batting Average on Contact."),
+                ("xbacon",                 "both",    "Expected Batting Average on Contact."),
+                ("xbadiff",                "both",    "xBA − actual BA. Positive = hitter has been unlucky (expect regression up)."),
+                ("xslgdiff",               "both",    "xSLG − actual SLG. Positive = power regression candidate."),
+                ("wobadiff",               "both",    "xwOBA − actual wOBA. Overall luck/regression signal."),
+                # Bat tracking
+                ("avg_swing_speed",        "batter",  "Average bat speed (mph) at contact across all swings."),
+                ("fast_swing_rate",        "batter",  "Fraction of swings above 75 mph bat speed."),
+                ("squared_up_contact",     "batter",  "Fraction of contacts classified as 'squared up' per bat-tracking sensors."),
+                ("squared_up_swing",       "batter",  "Fraction of all swings resulting in a squared-up contact."),
+                ("avg_swing_length",       "batter",  "Average arc length of the swing path (feet)."),
+                ("swords",                 "batter",  "Rate of swing-and-miss on pitches well outside the zone ('showing the sword')."),
+                ("attack_angle",           "batter",  "Average bat attack angle at contact (degrees); 10–18° is considered optimal for loft."),
+                ("ideal_angle_rate",       "batter",  "Fraction of swings within the ideal 5–30° attack angle window."),
+                # Batted-ball quality
+                ("exit_velocity_avg",      "both",    "Average exit velocity (mph) on all batted balls."),
+                ("launch_angle_avg",       "both",    "Average launch angle (degrees) on all batted balls."),
+                ("sweet_spot_percent",     "both",    "Fraction of batted balls with 8–32° launch angle ('sweet spot')."),
+                ("barrel_batted_rate",     "both",    "Fraction of PAs producing a 'barrel': exit velo ≥98 mph at optimal launch angle."),
+                ("solidcontact_percent",   "both",    "Fraction of batted balls rated as solid contact."),
+                ("flareburner_percent",    "both",    "Fraction classified as flares (bloops) or burners (weak grounders that find holes)."),
+                ("poorlyunder_percent",    "batter",  "Fraction of poorly-hit balls — popped up badly."),
+                ("poorlytopped_percent",   "batter",  "Fraction of poorly-hit balls — topped or slow roller."),
+                ("poorlyweak_percent",     "batter",  "Fraction of poorly-hit balls — weak contact."),
+                ("hard_hit_percent",       "both",    "Fraction of batted balls at ≥95 mph exit velocity."),
+                ("avg_best_speed",         "both",    "Average of a hitter's top-50% exit velocities — ceiling speed indicator."),
+                ("avg_hyper_speed",        "both",    "Average of top-10% exit velocities; 'maximum effort' swing speed."),
+                # Plate discipline
+                ("k_percent",              "both",    "Strikeout rate (K%)."),
+                ("bb_percent",             "both",    "Walk rate (BB%)."),
+                ("z_swing_percent",        "both",    "Swing rate on pitches inside the strike zone."),
+                ("z_swing_miss_percent",   "both",    "Whiff rate on pitches inside the strike zone."),
+                ("oz_swing_percent",       "both",    "Chase rate: swing% on pitches outside the zone."),
+                ("oz_swing_miss_percent",  "both",    "Whiff rate on pitches outside the zone."),
+                ("oz_contact_percent",     "both",    "Contact rate when swinging at pitches outside the zone."),
+                ("iz_contact_percent",     "both",    "Contact rate on pitches inside the zone."),
+                ("meatball_swing_percent", "both",    "Swing rate on 'meatball' pitches (dead center of zone, easiest to hit)."),
+                ("meatball_percent",       "pitcher", "Fraction of all pitches classified as meatballs — command/location metric."),
+                ("edge_percent",           "both",    "Fraction of pitches on the edge of the strike zone."),
+                ("whiff_percent",          "both",    "Overall swing-and-miss rate across all swings."),
+                ("swing_percent",          "both",    "Overall swing rate."),
+                ("f_strike_percent",       "both",    "Fraction of PAs where the first pitch is a called or swinging strike."),
+                # Batted-ball direction/type
+                ("pull_percent",           "both",    "Fraction of batted balls pulled (toward batter's dominant side)."),
+                ("straightaway_percent",   "both",    "Fraction of batted balls hit up the middle."),
+                ("opposite_percent",       "both",    "Fraction of batted balls hit to opposite field. High rate signals contact-first profile."),
+                ("groundballs_percent",    "both",    "Groundball rate."),
+                ("flyballs_percent",       "both",    "Flyball rate."),
+                ("linedrives_percent",     "both",    "Line drive rate."),
+                ("popups_percent",         "both",    "Infield popup rate — high rate is a red flag for batters, good sign for pitchers."),
+                # Speed (batters only)
+                ("sprint_speed",           "batter",  "Average sprint speed (ft/sec) on all-out running plays — raw athleticism."),
+                ("hp_to_1b",               "batter",  "Home-to-first time (sec) on groundball plays — proxy for foot speed."),
+                # Arsenal (pitchers only)
+                ("velocity",               "pitcher", "Average fastball velocity (mph) across all pitch types."),
+                ("ff_avg_speed",           "pitcher", "Four-seam fastball average velocity."),
+                ("ff_avg_spin",            "pitcher", "Four-seam fastball average spin rate (rpm)."),
+                ("ff_avg_break_x",         "pitcher", "Four-seam horizontal break (inches); positive = arm-side run."),
+                ("ff_avg_break_z",         "pitcher", "Four-seam induced vertical break (inches); higher = more 'rise' effect."),
+                ("sl_avg_speed",           "pitcher", "Slider average velocity."),
+                ("sl_avg_spin",            "pitcher", "Slider average spin rate."),
+                ("ch_avg_speed",           "pitcher", "Changeup average velocity."),
+                ("ch_avg_spin",            "pitcher", "Changeup average spin rate."),
+                ("cu_avg_speed",           "pitcher", "Curveball average velocity."),
+                ("cu_avg_spin",            "pitcher", "Curveball average spin rate."),
+                ("release_extension",      "pitcher", "How far in front of the pitching rubber the pitcher releases (feet); higher = shorter reaction time for batters."),
+                ("arm_angle",              "pitcher", "Arm slot angle at release (degrees from horizontal); affects pitch movement and deception profile."),
+            ]
+            dict_df = pd.DataFrame(dict_data, columns=["Column", "Applies to", "Description"])
+            cols_in_ranking = set(mc_ranking["feature"].tolist())
+            shown = dict_df[dict_df["Column"].isin(cols_in_ranking)].copy()
+            rest  = dict_df[~dict_df["Column"].isin(cols_in_ranking)].copy()
+            shown.insert(0, "In MC Ranking", "✅")
+            rest.insert(0, "In MC Ranking", "")
+            st.dataframe(
+                pd.concat([shown, rest], ignore_index=True),
+                hide_index=True,
+                width='stretch',
+            )
+
+        # ── Download ─────────────────────────────────────────────────────
+        st.download_button(
+            label="Download mc_feature_ranking.csv",
+            data=mc_ranking.to_csv(index=False),
+            file_name="mc_feature_ranking.csv",
+            mime="text/csv",
+        )
+
+        # ── Methodology note ──────────────────────────────────────────────
+        with st.expander("Methodology: why 6 batter + 4 pitcher per trial?"):
+            st.markdown("""
+**Why sample subsets instead of using all features at once?**
+
+The Monte Carlo approach uses *random subsets* per trial for two reasons:
+
+1. **Overfitting prevention** — With ~110 total Savant columns on top of 32 Retrosheet
+   features, XGBoost would have more features than useful training rows per fold (~4,000).
+   Testing all features at once inflates in-sample accuracy while making the model fragile.
+
+2. **Stability-based ranking** — A single full-feature model's importance scores are noisy
+   (collinearity, random splits). The MC frequency approach asks: *across many random subsets,
+   which features consistently appear in the best-performing combinations?* That is a more
+   reliable selection signal than one model's SHAP values.
+
+**Why 6 batter + 4 pitcher?**
+Tunable via `--n-bat` / `--n-pit`. The defaults create enough trial-to-trial variation
+(~44 batter and ~35 pitcher candidates available) while keeping each trial's model lean.
+
+**Automation pipeline:**
+MC runs every Monday 05:00 UTC → `mc_feature_ranking.csv` updates →
+`build_savant_model.py` trains with the new top features → metrics update here.
+            """)
+
 
 # ── Footer ───────────────────────────────────────────────────────────────────
 add_betting_oracle_footer()

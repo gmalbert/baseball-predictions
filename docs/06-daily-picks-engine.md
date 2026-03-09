@@ -6,24 +6,26 @@ Orchestrates the end-to-end flow: fetch today's data → run models → output p
 
 ## Pipeline Overview
 
-```
- 8:00 AM   Fetch schedule + probable pitchers
- 8:05 AM   Fetch team stats (rolling, season-level)
-11:00 AM   Fetch odds (opening lines)
-11:05 AM   Fetch weather forecasts
-11:10 AM   Build feature matrix for today's games
-11:15 AM   Run all 3 models → raw predictions
-11:20 AM   Apply filters (min edge, min confidence)
-11:25 AM   Format picks, store in DB, publish to API
- 4:00 PM   Re-fetch odds (updated lines), re-run models
- 4:15 PM   Update picks if significant line movement
-11:00 PM   Fetch final scores
-11:05 PM   Settle picks (win/loss/push), update metrics
+- ✅ 8:00 AM   Fetch schedule + probable pitchers
+- ✅ 8:05 AM   Fetch team stats (rolling, season-level) *(basic fetch present, DB merge TBD)*
+- ✅ 11:00 AM   Fetch odds (opening lines)
+- ✅ 11:05 AM   Fetch weather forecasts
+- ✅ 11:10 AM   Build feature matrix for today's games
+- ✅ 11:15 AM   Run all 3 models → raw predictions
+- ✅ 11:20 AM   Apply filters (min edge, min confidence)
+- ✅ 11:25 AM   Format picks, store in DB, publish to API *(CSV backup; SQL insert not yet)*
+- ✅ 4:00 PM   Re-fetch odds (updated lines), re-run models
+- ✅ 4:15 PM   Update picks if significant line movement
+- ✅ 11:00 PM   Fetch final scores
+- ✅ 11:05 PM   Settle picks (win/loss/push), update metrics
 ```
 
 ---
 
 ## 1. Main Daily Pipeline
+
+> ✅ Implemented in `src/picks/daily_pipeline.py` (code sample below reflects the actual module).
+
 
 ```python
 # src/picks/daily_pipeline.py
@@ -256,6 +258,9 @@ def _store_picks(picks: dict, target_date: date):
 
 ## 2. Result Settlement
 
+> ✅ Implemented in `src/picks/settle.py` – full functionality exists for fetching scores and settling picks.
+
+
 ```python
 # src/picks/settle.py
 """Settle picks after games complete: determine win/loss/push and profit."""
@@ -456,6 +461,9 @@ if __name__ == "__main__":
 ---
 
 ## 3. Pick Output Format
+
+> ✅ Format shown here matches the JSON produced by the pipeline and CSV backups.
+
 
 Each pick surfaced to users contains:
 

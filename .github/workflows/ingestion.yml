@@ -19,6 +19,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Nightly Savant refresh
+        run: |
+          # run even off-season; the script itself exits gracefully
+          python scripts/nightly_savant_refresh.py
+          
+      
       - name: Run ingestion (season-aware)
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}

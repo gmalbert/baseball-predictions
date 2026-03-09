@@ -1,6 +1,8 @@
 # 08 – Streamlit Dashboard & UX
 
-Multi-page Streamlit app providing daily picks, model performance, and bankroll tracking.
+Multi-page Streamlit app providing daily picks, model performance, and bankroll tracking.  
+
+> **Status:** ❌ *No Streamlit code currently exists in the repository; the following sections describe the intended layout and wireframes for a future build.*
 
 ---
 
@@ -22,22 +24,26 @@ Multi-page Streamlit app providing daily picks, model performance, and bankroll 
 ## App Structure (Multi-Page)
 
 ```
-streamlit_app/
-├── app.py                      # Entry point + shared layout
-├── pages/
+
+# The future layout would look like:
+
+├── predictions.py              # Entry point + shared layout
+├── pages/                      # individual page modules
 │   ├── 1_Todays_Picks.py       # Daily picks view
-│   ├── 2_Pick_History.py        # Historical ledger
-│   ├── 3_Model_Performance.py   # Model leaderboard & charts
-│   ├── 4_Bankroll.py            # Bankroll tracker & risk
+│   ├── 2_Pick_History.py       # Historical ledger
+│   ├── 3_Model_Performance.py  # Model leaderboard & charts
+│   ├── 4_Bankroll.py           # Bankroll tracker & risk
 │   └── 5_About.py              # Methodology explanation
-├── components/
+├── components/                 # reusable UI helpers
 │   ├── __init__.py
-│   ├── pick_cards.py            # Reusable pick display helpers
-│   ├── charts.py                # Plotly chart builders
-│   └── metrics.py               # KPI metric helpers
-└── .streamlit/
-    └── config.toml              # Theme & server config
+│   ├── pick_cards.py
+│   ├── charts.py
+│   └── metrics.py
+└── .streamlit/                 # theme & server config (root-level exists)
+    └── config.toml
 ```
+
+> *Current repository only contains a top‑level `.streamlit/` folder; all Streamlit code must be added.*
 
 ---
 
@@ -116,10 +122,12 @@ streamlit_app/
 
 ---
 
-## 3. Streamlit Configuration
+## 3. Streamlit Configuration  
+
+> **Status:** sample config only; `.streamlit/config.toml` exists at project root.
 
 ```toml
-# streamlit_app/.streamlit/config.toml
+.streamlit/config.toml
 
 [theme]
 primaryColor = "#1e40af"       # Blue-700
@@ -139,10 +147,12 @@ gatherUsageStats = false
 
 ---
 
-## 4. Entry Point
+<!-- ## 4. Entry Point  
+
+> **Note:** This sample entry point is **not implemented** in the repo. It serves as a reference for when the Streamlit app is built.
 
 ```python
-# streamlit_app/app.py
+
 """Main Streamlit app — entry point and shared config."""
 
 import streamlit as st
@@ -169,11 +179,13 @@ st.markdown(
     - **About** — Methodology and data sources
     """
 )
-```
+``` -->
 
 ---
 
-## 5. Today's Picks Page
+## 5. Today's Picks Page  
+
+> **Note:** The following code is illustrative; no corresponding Python files exist yet.
 
 ```python
 # streamlit_app/pages/1_Todays_Picks.py
@@ -307,7 +319,7 @@ st.dataframe(
         lambda v: "color: green" if v == "win" else ("color: red" if v == "loss" else ""),
         subset=["result"] if "result" in available else [],
     ),
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
 )
 ```
@@ -349,7 +361,7 @@ st.dataframe(
         "roi": "{:.1%}",
         "avg_confidence": "{:.3f}",
     }),
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
 )
 
@@ -375,7 +387,7 @@ if not profit_df.empty:
     )
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
     fig.update_layout(template="plotly_white", height=400)
-    st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # ---- Confidence Breakdown ----
 st.subheader("Performance by Confidence Tier")
@@ -394,7 +406,7 @@ if not conf_df.empty:
             color_discrete_map={"wins": "#10b981", "losses": "#ef4444"},
         )
         fig_bar.update_layout(template="plotly_white")
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width='stretch')
 
     with col2:
         fig_roi = px.bar(
@@ -406,7 +418,7 @@ if not conf_df.empty:
             color_continuous_scale=["#ef4444", "#f59e0b", "#10b981"],
         )
         fig_roi.update_layout(template="plotly_white")
-        st.plotly_chart(fig_roi, use_container_width=True)
+        st.plotly_chart(fig_roi, width='stretch')
 ```
 
 ---
@@ -481,7 +493,7 @@ if not daily.empty:
     )
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
     fig.update_layout(template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 else:
     st.info("No settled bets yet. P/L chart will appear once bets are tracked.")
 ```

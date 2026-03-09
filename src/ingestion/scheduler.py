@@ -14,6 +14,7 @@ from .mlb_stats import fetch_todays_probable_pitchers
 from .odds import fetch_current_odds
 from .weather import fetch_weather_for_games
 from .season import in_season
+from src.picks.afternoon_refresh import afternoon_picks_refresh
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,15 +47,13 @@ def midday_odds_pull() -> None:
 
 @scheduler.scheduled_job(CronTrigger(hour=16, minute=0, timezone="America/New_York"))
 def afternoon_update() -> None:
-    """4 PM ET – Pull updated odds + weather (closer to game time)."""
+    """4 PM ET – Re-fetch odds, detect line movement, update affected picks."""
     if not in_season():
         logger.info("Out of season – skipping afternoon update")
         return
 
     logger.info("Running afternoon update...")
-    fetch_current_odds()
-    schedule = fetch_todays_probable_pitchers()
-    fetch_weather_for_games(schedule)
+    afternoon_picks_refresh()
 
 
 @scheduler.scheduled_job(CronTrigger(hour=1, minute=0, timezone="America/New_York"))

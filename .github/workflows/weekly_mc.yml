@@ -1,0 +1,52 @@
+name: Weekly Monte Carlo + Savant Model Rebuild
+
+# Runs every Monday at 05:00 UTC — after the weekend games settle but before
+# the US day begins. Also triggerable manually via workflow_dispatch.
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          # Need full history so git push works cleanly
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Monte Carlo feature selection (1 000 trials)
+        run: python scripts/monte_carlo_features.py --trials 1000
+
+      - name: Build Savant-enriched models (top 8 bat + 6 pit)
+        run: python scripts/build_savant_model.py --n-bat 8 --n-pit 6
+
+      - name: Commit updated artifacts
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add \
+            data_files/processed/mc_feature_ranking.csv \
+            data_files/processed/mc_feature_trials.parquet \
+            data_files/processed/savant_model_metrics.parquet \
+            data_files/processed/savant_model_importances.parquet \
+            data_files/processed/moneyline_savant_test_df.parquet \
+            data_files/processed/spread_savant_test_df.parquet \
+            data_files/processed/totals_savant_test_df.parquet \
+            models/
+          # Only commit when something actually changed
+          git diff --cached --quiet || \
+            git commit -m "chore: weekly MC + Savant model rebuild [skip ci]"
+          git push
