@@ -3,6 +3,11 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import os
 
+from dotenv import load_dotenv
+
+# Load .env from the project root (two levels up from this file)
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 
 @dataclass
 class IngestionConfig:

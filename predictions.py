@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 # NOTE: `st.plotly_chart` and `st.dataframe` now accept a `width` argument
-#       (use `'stretch'` in place of the old `use_container_width=True`, or
+#       (use `'stretch'` in place of the old `width="stretch"`, or
 #       `'content'` for the opposite).  This prevents legend overlap and
 #       is the preferred API going forward.
 
@@ -35,8 +35,175 @@ from src.evaluation.dashboard import generate_dashboard_data
 
 from footer import add_betting_oracle_footer
 
+import statsapi  # MLB Stats API — used by Daily Schedule tab
 
 PROCESSED = ROOT / "data_files" / "processed"
+
+# ---------------------------------------------------------------------------
+# MLB Stats API full-name → Retrosheet short-name (used by head_to_head)
+# ---------------------------------------------------------------------------
+_MLB_TO_RETRO: dict[str, str] = {
+    "Arizona Diamondbacks": "Diamondbacks",
+    "Atlanta Braves": "Braves",
+    "Baltimore Orioles": "Orioles",
+    "Boston Red Sox": "Red Sox",
+    "Chicago Cubs": "Cubs",
+    "Chicago White Sox": "White Sox",
+    "Cincinnati Reds": "Reds",
+    "Cleveland Guardians": "Guardians",
+    "Colorado Rockies": "Rockies",
+    "Detroit Tigers": "Tigers",
+    "Houston Astros": "Astros",
+    "Kansas City Royals": "Royals",
+    "Los Angeles Angels": "Angels",
+    "Los Angeles Dodgers": "Dodgers",
+    "Miami Marlins": "Marlins",
+    "Milwaukee Brewers": "Brewers",
+    "Minnesota Twins": "Twins",
+    "New York Mets": "Mets",
+    "New York Yankees": "Yankees",
+    "Oakland Athletics": "Athletics",
+    "Sacramento Athletics": "Athletics",
+    "Philadelphia Phillies": "Phillies",
+    "Pittsburgh Pirates": "Pirates",
+    "San Diego Padres": "Padres",
+    "Seattle Mariners": "Mariners",
+    "San Francisco Giants": "Giants",
+    "St. Louis Cardinals": "Cardinals",
+    "Tampa Bay Rays": "Rays",
+    "Texas Rangers": "Rangers",
+    "Toronto Blue Jays": "Blue Jays",
+    "Washington Nationals": "Nationals",
+}
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_todays_schedule() -> list[dict]:
+    """Fetch today's MLB schedule via the MLB Stats API. Cached for 1 hour."""
+    try:
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        games = statsapi.schedule(date=today)
+        return [g for g in games if g.get("game_type", "R") in ("R", "F", "D", "L", "W", "S")]
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _load_latest_odds() -> pd.DataFrame:
+    """Load the most-recently fetched odds CSV, or empty DataFrame if none exist."""
+    odds_dir = ROOT / "data_files" / "raw" / "odds"
+    if not odds_dir.exists():
+        return pd.DataFrame()
+    files = sorted(odds_dir.glob("odds_*.csv"))
+    if not files:
+        return pd.DataFrame()
+    return pd.read_csv(files[-1])
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_team_standings() -> dict[str, dict]:
+    """Current-season W/L records via the free MLB Stats API (no key required)."""
+    try:
+        standings = statsapi.standings_data()
+        result: dict[str, dict] = {}
+        for _div_id, div_data in standings.items():
+            for team in div_data.get("teams", []):
+                result[team["name"]] = {
+                    "W": team.get("w", "—"),
+                    "L": team.get("l", "—"),
+                    "pct": team.get("pct", "—"),
+                    "streak": team.get("streak", "—"),
+                    "L10": team.get("lastTen", "—"),
+                }
+        return result
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_pitcher_stats(pitcher_name: str) -> dict:
+    """Season pitching stats for a named pitcher via the free MLB Stats API."""
+    if not pitcher_name or pitcher_name.strip().upper() == "TBD":
+        return {}
+    try:
+        results = statsapi.lookup_player(pitcher_name)
+        if not results:
+            return {}
+        player_id = results[0]["id"]
+        data = statsapi.player_stat_data(player_id, group="pitching", type="season", sportId=1)
+        if not data or not data.get("stats"):
+            return {}
+        s = data["stats"][0]["stats"]
+        return {
+            "W-L":  f"{s.get('wins', '?')}-{s.get('losses', '?')}",
+            "ERA":  s.get("era", "—"),
+            "IP":   s.get("inningsPitched", "—"),
+            "GS":   s.get("gamesStarted", "—"),
+            "K":    s.get("strikeOuts", "—"),
+            "BB":   s.get("baseOnBalls", "—"),
+            "HR":   s.get("homeRuns", "—"),
+            "WHIP": s.get("whip", "—"),
+            "K/9":  s.get("strikeoutsPer9Inn", "—"),
+        }
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_espn_odds() -> list[dict]:
+    """
+    Fetch today's MLB scoreboard from ESPN's public API.
+    Completely free — no key, no monthly quota.
+    Cached 30 min so refreshes don't hammer ESPN.
+    """
+    import requests as _requests
+    try:
+        resp = _requests.get(
+            "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = []
+        for event in resp.json().get("events", []):
+            for comp in event.get("competitions", []):
+                odds_list = comp.get("odds", [])
+                if not odds_list:
+                    continue
+                o = odds_list[0]
+                competitors = comp.get("competitors", [])
+                home_name = next(
+                    (c["team"]["displayName"] for c in competitors if c["homeAway"] == "home"), ""
+                )
+                away_name = next(
+                    (c["team"]["displayName"] for c in competitors if c["homeAway"] == "away"), ""
+                )
+                result.append({
+                    "home_team":   home_name,
+                    "away_team":   away_name,
+                    "provider":    o.get("provider", {}).get("name", "ESPN"),
+                    "ml_home":     o.get("homeTeamOdds", {}).get("moneyLine", "—"),
+                    "ml_away":     o.get("awayTeamOdds", {}).get("moneyLine", "—"),
+                    "spread_home": o.get("homeTeamOdds", {}).get("spreadOdds", "—"),
+                    "details":     o.get("details", "—"),
+                    "over_under":  o.get("overUnder", "—"),
+                    "over_odds":   o.get("overOdds", "—"),
+                    "under_odds":  o.get("underOdds", "—"),
+                })
+        return result
+    except Exception:
+        return []
+
+def _kelly_fraction(prob: float, american_odds: int) -> float:
+    """Return the full-Kelly bet fraction for a given win probability + American odds pair."""
+    if american_odds >= 0:
+        decimal = american_odds / 100.0 + 1.0
+    else:
+        decimal = 100.0 / abs(american_odds) + 1.0
+    b = decimal - 1.0
+    q = 1.0 - prob
+    f = (b * prob - q) / b
+    return max(f, 0.0)
+
 
 def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
     """
@@ -245,8 +412,7 @@ css = """
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
-st.image(str(ROOT / "data_files" / "logo.png"), width=150)
-# st.title("⚾ Baseball Predictions")
+st.title("Betting Cleanup")
 
 # ─────────────────────────────────────────────
 # Pre-load all data once (runs at startup, cached permanently)
@@ -266,6 +432,11 @@ with st.sidebar:
         step=1,
     )
     st.caption(f"Using {min_year}–{max_year} regular-season games.")
+
+    # Branding (centered)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(str(ROOT / "data_files" / "logo.png"), width=150)
 
 # Filter in-memory — instant regardless of year selection
 def _yr(df: pd.DataFrame) -> pd.DataFrame:
@@ -295,8 +466,11 @@ if "ml_results" not in st.session_state:
     st.session_state["ml_feat_df"] = features_df
 if "eval_backtests" not in st.session_state:
     st.session_state["eval_backtests"] = _load_eval_backtests()
+if "schedule_selected_game" not in st.session_state:
+    st.session_state["schedule_selected_game"] = None
 
 (
+    tab_schedule,
     tab_standings,
     tab_tbat,
     tab_tpitch,
@@ -308,7 +482,12 @@ if "eval_backtests" not in st.session_state:
     tab_models,
     tab_evaluation,
     tab_savant,
+    tab_history,
+    tab_model_perf,
+    tab_bankroll,
+    tab_about,
 ) = st.tabs([
+    "📅 Daily Schedule",
     "📊 Standings",
     "🏏 Team Batting",
     "⚾ Team Pitching",
@@ -320,7 +499,367 @@ if "eval_backtests" not in st.session_state:
     "🤖 Models",
     "📊 Evaluation",
     "🔬 Savant Research",
+    "📋 Pick History",
+    "🏆 Model Performance",
+    "💰 Bankroll",
+    "ℹ️ About",
 ])
+
+
+# ══════════════════════════════════════════════
+# TAB 0 — Daily Schedule
+# ══════════════════════════════════════════════
+with tab_schedule:
+    _games_today = _fetch_todays_schedule()
+
+    # ── Game Detail View ──────────────────────────────────────────────────────
+    if st.session_state["schedule_selected_game"] is not None:
+        g = st.session_state["schedule_selected_game"]
+        away_full = g.get("away_name", "Away")
+        home_full = g.get("home_name", "Home")
+        away_retro = _MLB_TO_RETRO.get(away_full, away_full)
+        home_retro = _MLB_TO_RETRO.get(home_full, home_full)
+
+        if st.button("← Back to Schedule", key="back_to_schedule"):
+            st.session_state["schedule_selected_game"] = None
+            st.rerun()
+
+        st.markdown(f"## {away_full} @ {home_full}")
+
+        # ── Top row: key details ───────────────────────────────────────────
+        status = g.get("status", "Scheduled")
+        venue  = g.get("venue_name", "—")
+        series = g.get("series_description", "")
+        gtime_raw = g.get("game_datetime", "")
+        if gtime_raw:
+            try:
+                dt_utc = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
+                dt_et  = dt_utc - datetime.timedelta(hours=4)   # UTC → ET (rough)
+                gtime_str = dt_et.strftime("%I:%M %p ET")
+            except Exception:
+                gtime_str = gtime_raw
+        else:
+            gtime_str = "TBD"
+
+        dc1, dc2, dc3, dc4 = st.columns(4)
+        dc1.metric("Status", status)
+        dc2.metric("Game Time", gtime_str)
+        dc3.metric("Venue", venue)
+        dc4.metric("Series", series or "Regular Season")
+
+        st.divider()
+
+        # ── Team Records ─────────────────────────────────────────────────
+        _standings = _fetch_team_standings()
+        away_rec = _standings.get(away_full, {})
+        home_rec = _standings.get(home_full, {})
+        if away_rec or home_rec:
+            st.markdown("### 📋 Team Records (Current Season)")
+            tr1, tr2 = st.columns(2)
+            with tr1:
+                st.markdown(f"**{away_full} (Away)**")
+                if away_rec:
+                    rc1, rc2, rc3, rc4 = st.columns(4)
+                    rc1.metric("W-L", f"{away_rec['W']}-{away_rec['L']}")
+                    rc2.metric("Win %", away_rec.get("pct", "—"))
+                    rc3.metric("Streak", away_rec.get("streak", "—"))
+                    rc4.metric("Last 10", away_rec.get("L10", "—"))
+                else:
+                    st.caption("Record unavailable.")
+            with tr2:
+                st.markdown(f"**{home_full} (Home)**")
+                if home_rec:
+                    rc1, rc2, rc3, rc4 = st.columns(4)
+                    rc1.metric("W-L", f"{home_rec['W']}-{home_rec['L']}")
+                    rc2.metric("Win %", home_rec.get("pct", "—"))
+                    rc3.metric("Streak", home_rec.get("streak", "—"))
+                    rc4.metric("Last 10", home_rec.get("L10", "—"))
+                else:
+                    st.caption("Record unavailable.")
+            st.divider()
+
+        # ── Probable Pitchers ─────────────────────────────────────────────
+        away_sp = g.get("away_probable_pitcher", "TBD") or "TBD"
+        home_sp = g.get("home_probable_pitcher", "TBD") or "TBD"
+        st.markdown("### ⚾ Probable Pitchers")
+        with st.spinner("Fetching pitcher stats…"):
+            away_sp_stats = _fetch_pitcher_stats(away_sp)
+            home_sp_stats = _fetch_pitcher_stats(home_sp)
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            st.markdown(f"**{away_full} (Away)**")
+            st.markdown(f"##### {away_sp}")
+            if away_sp_stats:
+                st.dataframe(
+                    pd.DataFrame(away_sp_stats.items(), columns=["Stat", "Value"]),
+                    hide_index=True, width="stretch",
+                )
+            elif away_sp != "TBD":
+                st.caption("Stats not yet available for this season.")
+        with pc2:
+            st.markdown(f"**{home_full} (Home)**")
+            st.markdown(f"##### {home_sp}")
+            if home_sp_stats:
+                st.dataframe(
+                    pd.DataFrame(home_sp_stats.items(), columns=["Stat", "Value"]),
+                    hide_index=True, width="stretch",
+                )
+            elif home_sp != "TBD":
+                st.caption("Stats not yet available for this season.")
+
+        st.divider()
+
+        # ── Historical Head-to-Head ───────────────────────────────────────
+        st.markdown("### 🆚 Head-to-Head History (2020–present)")
+        with st.spinner("Loading H2H data…"):
+            h2h_detail = head_to_head(away_retro, home_retro, 2020, 2025)
+
+        if h2h_detail.empty:
+            st.info(
+                f"No historical matchups found between **{away_retro}** and **{home_retro}** "
+                "in the 2020–2025 dataset."
+            )
+        else:
+            a_w = int(h2h_detail["a_win"].sum())
+            b_w = len(h2h_detail) - a_w
+            tot = len(h2h_detail)
+            hc1, hc2, hc3 = st.columns(3)
+            hc1.metric(f"{away_retro} wins", f"{a_w}  ({a_w/tot:.0%})")
+            hc2.metric(f"{home_retro} wins", f"{b_w}  ({b_w/tot:.0%})")
+            hc3.metric("Games played", tot)
+
+            fig_h2h = go.Figure()
+            fig_h2h.add_trace(go.Scatter(
+                x=h2h_detail["date"], y=h2h_detail["a_runs"],
+                mode="markers+lines", name=f"{away_retro} runs",
+                line=dict(color="#1f77b4"),
+            ))
+            fig_h2h.add_trace(go.Scatter(
+                x=h2h_detail["date"], y=h2h_detail["b_runs"],
+                mode="markers+lines", name=f"{home_retro} runs",
+                line=dict(color="#d62728"),
+            ))
+            fig_h2h.update_layout(
+                title=f"{away_retro} vs {home_retro} — Runs per game",
+                xaxis_title="Date", yaxis_title="Runs",
+            )
+            st.plotly_chart(fig_h2h, width="stretch")
+
+            h2h_detail["season"] = h2h_detail["date"].dt.year
+            by_szn = h2h_detail.groupby("season").agg(
+                away_wins=("a_win", "sum"),
+                games=("a_win", "count"),
+            ).reset_index()
+            by_szn["away_wpct"] = by_szn["away_wins"] / by_szn["games"]
+            fig_szn = px.bar(
+                by_szn, x="season", y="away_wpct",
+                title=f"{away_retro} win % vs {home_retro} by season",
+                labels={"away_wpct": f"{away_retro} W%", "season": "Season"},
+                color="away_wpct", color_continuous_scale="RdYlGn",
+            )
+            fig_szn.add_hline(y=0.5, line_dash="dot", line_color="gray")
+            fig_szn.update_layout(coloraxis_showscale=False)
+            st.plotly_chart(fig_szn, width="stretch")
+
+            with st.expander("Full game log"):
+                st.dataframe(
+                    h2h_detail[["date", "visteam", "hometeam", "vruns", "hruns", "a_win"]]
+                    .assign(date=lambda d: d["date"].dt.date)
+                    .rename(columns={**READABLE_COLS, "a_win": f"{away_retro} Win"}),
+                    hide_index=True, width="stretch",
+                )
+
+        st.divider()
+
+        # ── Recent Form (rolling 10g) ─────────────────────────────────────
+        st.markdown("### 📈 Recent Form — Last 20 Games")
+        fc1, fc2 = st.columns(2)
+        for col_ctx, team_retro, team_full in [
+            (fc1, away_retro, away_full),
+            (fc2, home_retro, home_full),
+        ]:
+            with col_ctx:
+                st.markdown(f"**{team_full}**")
+                with st.spinner(f"Loading {team_retro} form…"):
+                    form = rolling_team_form(team_retro, 10, 2020, 2025)
+                if form.empty:
+                    st.caption("No form data available.")
+                else:
+                    recent = form.tail(20)
+                    fig_form = px.line(
+                        recent, x="date", y="roll_W_10",
+                        title=f"{team_retro} — 10-game win rate",
+                        labels={"roll_W_10": "Win rate (10g)", "date": ""},
+                        color_discrete_sequence=["#1f77b4"] if team_retro == away_retro else ["#d62728"],
+                    )
+                    fig_form.add_hline(y=0.5, line_dash="dot", line_color="gray")
+                    fig_form.update_layout(height=250, margin=dict(t=30, b=10))
+                    st.plotly_chart(fig_form, width="stretch")
+                    # Last 5 games quick summary
+                    last5 = form.tail(5)[["date", "RS", "RA", "W"]].copy()
+                    last5["date"] = last5["date"].dt.strftime("%b %d")
+                    last5["Result"] = last5["W"].map({1: "✔ W", 0: "✘ L"})
+                    last5 = last5.rename(columns={"date": "Date", "RS": "R", "RA": "RA"})
+                    st.dataframe(last5[["Date", "R", "RA", "Result"]], hide_index=True)
+
+        st.divider()
+
+        # ── Odds ─────────────────────────────────────────────────────────
+        # ESPN scoreboard API: free, no key, no monthly quota, cached 30 min.
+        # The Odds API CSV (optional): only written when you manually run
+        #   fetch_current_odds() — the dashboard itself never calls that API.
+        #   Monthly quota: 500 req. We used 1 today (341 remaining).
+        st.markdown("### 💰 Odds")
+
+        _espn_odds_list = _fetch_espn_odds()
+        _game_espn: dict | None = None
+        for _eo in _espn_odds_list:
+            if (
+                away_full.split()[-1].lower() in _eo["away_team"].lower()
+                or home_full.split()[-1].lower() in _eo["home_team"].lower()
+            ):
+                _game_espn = _eo
+                break
+
+        if _game_espn:
+            st.caption(f"Source: **{_game_espn['provider']}** (ESPN public API — free, no quota) · refreshes every 30 min")
+            oc1, oc2, oc3 = st.columns(3)
+            with oc1:
+                st.markdown("**💵 Moneyline**")
+                st.metric(away_full, str(_game_espn["ml_away"]))
+                st.metric(home_full, str(_game_espn["ml_home"]))
+            with oc2:
+                st.markdown("**📏 Run Line**")
+                st.metric("Spread", str(_game_espn["details"]))
+                st.metric("Home spread odds", str(_game_espn["spread_home"]))
+            with oc3:
+                st.markdown("**📊 Over/Under**")
+                st.metric("Total", str(_game_espn["over_under"]))
+                st.markdown(
+                    f"Over: **{_game_espn['over_odds']}** &nbsp;/&nbsp; Under: **{_game_espn['under_odds']}**",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No ESPN odds found for this game yet. Odds typically open 1–2 days before game time.")
+
+        # Optional: multi-book comparison from saved Odds API CSV
+        _odds_csv = _load_latest_odds()
+        if not _odds_csv.empty:
+            with st.expander("📚 Multi-book comparison (saved Odds API data)"):
+                st.caption(
+                    "This data was saved from a manual run of `fetch_current_odds()`. "
+                    "The dashboard never calls The Odds API automatically — your 500 req/month quota "
+                    "is only consumed when you explicitly run that command."
+                )
+                mask_odds = (
+                    _odds_csv["home_team"].str.contains(home_full.split()[-1], case=False, na=False)
+                    | _odds_csv["away_team"].str.contains(away_full.split()[-1], case=False, na=False)
+                )
+                game_odds = _odds_csv[mask_odds].copy()
+                if game_odds.empty:
+                    st.caption("No multi-book data for this matchup in the saved file.")
+                else:
+                    for market_key, market_label in [
+                        ("h2h",     "💵 Moneyline"),
+                        ("spreads", "📏 Run Line"),
+                        ("totals",  "📊 Over/Under"),
+                    ]:
+                        mdf = game_odds[game_odds["market"] == market_key]
+                        if mdf.empty:
+                            continue
+                        st.markdown(f"**{market_label}**")
+                        pivot = (
+                            mdf[["bookmaker", "outcome_name", "outcome_price", "outcome_point"]]
+                            .sort_values("bookmaker")
+                        )
+                        st.dataframe(
+                            pivot.rename(columns={
+                                "bookmaker": "Book", "outcome_name": "Side",
+                                "outcome_price": "Odds", "outcome_point": "Line",
+                            }),
+                            hide_index=True, width="stretch",
+                        )
+
+    # ── Schedule List View ────────────────────────────────────────────────────
+    else:
+        today_str = datetime.date.today().strftime("%A, %B %d, %Y")
+        st.subheader(f"Today's Schedule — {today_str}")
+
+        if not _games_today:
+            st.info(
+                "No MLB games scheduled today, or the MLB Stats API is unreachable. "
+                "Check back on a game day."
+            )
+        else:
+            st.caption(f"{len(_games_today)} game{'s' if len(_games_today) != 1 else ''} today")
+
+            # Status badge colours
+            _status_badge = {
+                "Final": "🏁",
+                "Game Over": "🏁",
+                "In Progress": "🔴 LIVE",
+                "Scheduled": "🕐",
+                "Pre-Game": "⏳",
+                "Warmup": "⏳",
+                "Delayed": "⚠️",
+                "Suspended": "⚠️",
+                "Postponed": "🚫",
+                "Cancelled": "🚫",
+            }
+
+            for idx, g in enumerate(_games_today):
+                away_name  = g.get("away_name", "Away")
+                home_name  = g.get("home_name", "Home")
+                away_sp    = g.get("away_probable_pitcher", "TBD") or "TBD"
+                home_sp    = g.get("home_probable_pitcher", "TBD") or "TBD"
+                venue      = g.get("venue_name", "—")
+                status     = g.get("status", "Scheduled")
+                status_icon = _status_badge.get(status, "")
+                gtime_raw  = g.get("game_datetime", "")
+
+                if gtime_raw:
+                    try:
+                        dt_utc = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
+                        dt_et  = dt_utc - datetime.timedelta(hours=4)
+                        gtime_str = dt_et.strftime("%I:%M %p ET")
+                    except Exception:
+                        gtime_str = "TBD"
+                else:
+                    gtime_str = "TBD"
+
+                # Show score only if the game is in progress or complete
+                score_str = ""
+                score_status = str(status).lower()
+                if score_status in ("final", "game over", "in progress", "live", "completed"):
+                    if g.get("away_score") is not None and g.get("home_score") is not None:
+                        score_str = f"  **{g['away_score']} – {g['home_score']}**"
+
+                with st.container(border=True):
+                    sc1, sc2, sc3 = st.columns([4, 3, 2])
+
+                    with sc1:
+                        st.markdown(
+                            f"**{away_name}** @ **{home_name}**{score_str}  \n"
+                            f"<small>🏟 {venue}</small>",
+                            unsafe_allow_html=True,
+                        )
+
+                    with sc2:
+                        st.markdown(
+                            f"<small>🕐 {gtime_str} &nbsp;|&nbsp; {status_icon} {status}</small>  \n"
+                            f"<small>Away SP: {away_sp}</small>  \n"
+                            f"<small>Home SP: {home_sp}</small>",
+                            unsafe_allow_html=True,
+                        )
+
+                    with sc3:
+                        if st.button(
+                            "View Details →",
+                            key=f"sched_detail_{idx}",
+                            width="stretch",
+                        ):
+                            st.session_state["schedule_selected_game"] = g
+                            st.rerun()
 
 
 # ══════════════════════════════════════════════
@@ -1285,14 +1824,33 @@ with tab_evaluation:
         for name, bt in st.session_state["eval_backtests"].items():
             leaderboard.append(bt.summary())
         lb_df = pd.DataFrame(leaderboard).sort_values("roi", ascending=False)
+        if "period" in lb_df.columns:
+            # Remove time-of-day / ranges from period strings (e.g. "2020-07-23 00:00:00 to 2025-09-28 00:00:00").
+            # Take the first 10 characters (YYYY-MM-DD) when possible.
+            lb_df["period"] = (
+                lb_df["period"].astype(str)
+                .str.strip()
+                .str.slice(0, 10)
+            )
+
         st.markdown("### Backtest Leaderboard")
-        st.dataframe(lb_df.rename(columns={
-            "model": "Model",
-            "total_bets": "Bets",
-            "win_rate": "Win Rate",
-            "roi": "ROI",
-            "total_units": "Units",
-        }), hide_index=True)
+        st.dataframe(
+            lb_df.rename(columns={
+                "model":         "Model",
+                "pick_type":     "Pick Type",
+                "period":        "Period",
+                "total_bets":    "Bets",
+                "wins":          "Wins",
+                "losses":        "Losses",
+                "pushes":        "Pushes",
+                "win_rate":      "Win Rate",
+                "total_units":   "Units",
+                "max_drawdown":  "Max Drawdown",
+                "roi":           "ROI",
+            }),
+            hide_index=True,
+            width="stretch",
+        )
 
         # calibration plot for each
         st.markdown("### Calibration Charts")
@@ -1620,6 +2178,458 @@ Tunable via `--n-bat` / `--n-pit`. The defaults create enough trial-to-trial var
 MC runs every Monday 05:00 UTC → `mc_feature_ranking.csv` updates →
 `build_savant_model.py` trains with the new top features → metrics update here.
             """)
+
+
+
+# ══════════════════════════════════════════════
+# TAB — Pick History
+# ══════════════════════════════════════════════
+with tab_history:
+    st.subheader("Pick History")
+    st.markdown(
+        "Backtest history for all modeled picks. "
+        "Once the daily pipeline runs, live picks will appear here automatically."
+    )
+
+    _bt = st.session_state["eval_backtests"]
+    if _bt is None:
+        st.info(
+            "No pick history yet. Run the daily pipeline or backtest scripts to populate data."
+        )
+    else:
+        # Flatten all bets across models into a single DataFrame
+        _hist_rows: list[dict] = []
+        for _model_name, _bt_result in _bt.items():
+            for _b in _bt_result.bets:
+                _hist_rows.append({
+                    "model":          _model_name,
+                    "date":           _b.date,
+                    "game_id":        _b.game_id,
+                    "pick_type":      _b.pick_type,
+                    "confidence":     _b.confidence,
+                    "predicted_prob": _b.predicted_prob,
+                    "edge":           _b.edge,
+                    "american_odds":  _b.american_odds,
+                    "result":         _b.result,
+                    "profit_units":   _b.profit_units,
+                })
+        _hist_df = pd.DataFrame(_hist_rows)
+        if _hist_df.empty:
+            st.info("No picks data available.")
+        else:
+            _hist_df["model"] = _hist_df["model"].str.title()
+            _hist_df["date"] = pd.to_datetime(_hist_df["date"])
+            _PICK_TYPE_LABELS = {"totals": "Totals", "over_under": "Over/Under"}
+            _hist_df["pick_type"] = _hist_df["pick_type"].map(
+                lambda x: _PICK_TYPE_LABELS.get(x, x.title())
+            )
+            _hist_df["confidence"] = _hist_df["confidence"].str.title()
+
+            # ── Filters ────────────────────────────────────────────────────
+            _fc1, _fc2, _fc3, _fc4 = st.columns(4)
+            with _fc1:
+                _models_avail = ["All"] + sorted(_hist_df["model"].unique().tolist())
+                _sel_model = st.selectbox("Model", _models_avail, key="hist_model_filter")
+            with _fc2:
+                _sel_result = st.selectbox(
+                    "Result", ["All", "win", "loss"], key="hist_result_filter"
+                )
+            with _fc3:
+                _conf_opts = ["All"] + sorted(_hist_df["confidence"].dropna().unique().tolist())
+                _sel_conf = st.selectbox("Confidence", _conf_opts, key="hist_conf_filter")
+            with _fc4:
+                _pt_opts = ["All"] + sorted(_hist_df["pick_type"].unique().tolist())
+                _sel_pt = st.selectbox("Pick Type", _pt_opts, key="hist_pt_filter")
+
+            _filtered = _hist_df.copy()
+            if _sel_model != "All":
+                _filtered = _filtered[_filtered["model"] == _sel_model]
+            if _sel_result != "All":
+                _filtered = _filtered[_filtered["result"] == _sel_result]
+            if _sel_conf != "All":
+                _filtered = _filtered[_filtered["confidence"] == _sel_conf]
+            if _sel_pt != "All":
+                _filtered = _filtered[_filtered["pick_type"] == _sel_pt]
+
+            # ── Summary metrics ─────────────────────────────────────────────
+            _total_bets  = len(_filtered)
+            _wins        = int((_filtered["result"] == "win").sum())
+            _losses      = int((_filtered["result"] == "loss").sum())
+            _win_rate    = _wins / _total_bets if _total_bets > 0 else 0.0
+            _total_units = float(_filtered["profit_units"].sum())
+            _avg_edge    = float(_filtered["edge"].mean()) if _total_bets > 0 else 0.0
+
+            _m1, _m2, _m3, _m4, _m5 = st.columns(5)
+            _m1.metric("Total Picks", _total_bets)
+            _m2.metric("Record", f"{_wins}–{_losses}")
+            _m3.metric("Win Rate", f"{_win_rate:.1%}")
+            _m4.metric("Total Units", f"{_total_units:+.2f}")
+            _m5.metric("Avg Edge", f"{_avg_edge:.1%}")
+
+            st.divider()
+
+            # ── Cumulative P&L chart ─────────────────────────────────────────
+            _cum_df = (
+                _filtered
+                .sort_values("date")
+                .copy()
+            )
+            _cum_df["cumulative_units"] = _cum_df.groupby("model")["profit_units"].cumsum()
+            if not _cum_df.empty:
+                _pnl_fig = px.line(
+                    _cum_df,
+                    x="date",
+                    y="cumulative_units",
+                    color="model",
+                    title="Cumulative P&L (units)",
+                    labels={
+                        "date": "Date",
+                        "cumulative_units": "Cumulative Units",
+                        "model": "Model",
+                    },
+                )
+                _pnl_fig.add_hline(y=0, line_dash="dot", line_color="gray")
+                st.plotly_chart(_pnl_fig, width="stretch")
+
+            # ── Detailed ledger ──────────────────────────────────────────────
+            st.markdown("#### Detailed Ledger")
+            _display_df = _filtered[[
+                "date", "model", "pick_type",
+                "confidence", "predicted_prob", "edge",
+                "american_odds", "result", "profit_units",
+            ]].copy()
+            _display_df["date"] = _display_df["date"].dt.strftime("%Y-%m-%d")
+            _display_df["predicted_prob"] = (
+                (_display_df["predicted_prob"] * 100).round(1).astype(str) + "%"
+            )
+            _display_df["edge"] = (
+                (_display_df["edge"] * 100).round(1).astype(str) + "%"
+            )
+            _display_df["american_odds"] = _display_df["american_odds"].apply(
+                lambda x: f"{int(x):,}"
+            )
+            _display_df = _display_df.rename(columns={
+                "date":           "Date",
+                "model":          "Model",
+                "pick_type":      "Pick Type",
+                "confidence":     "Confidence",
+                "predicted_prob": "Pred. Prob",
+                "edge":           "Edge",
+                "american_odds":  "Odds",
+                "result":         "Result",
+                "profit_units":   "P&L (Units)",
+            })
+            _display_df = _display_df.sort_values("Date", ascending=False).reset_index(drop=True)
+            st.dataframe(_display_df, hide_index=True, width="stretch")
+
+
+# ══════════════════════════════════════════════
+# TAB — Model Performance
+# ══════════════════════════════════════════════
+with tab_model_perf:
+    st.subheader("Model Performance")
+    st.markdown(
+        "Backtest-derived profitability metrics — focused on betting outcomes "
+        "rather than raw ML accuracy."
+    )
+
+    _bt = st.session_state["eval_backtests"]
+    if _bt is None:
+        st.info("No model performance data yet. Run the backtest scripts to populate data.")
+    else:
+        # ── Leaderboard ─────────────────────────────────────────────────────
+        st.markdown("### Leaderboard")
+        _lb_rows = [_btr.summary() for _btr in _bt.values()]
+        _lb_df = pd.DataFrame(_lb_rows).sort_values("roi", ascending=False)
+        _lb_df["model"] = _lb_df["model"].str.title()
+        _PICK_TYPE_LABELS_MP = {"totals": "Totals", "over_under": "Over/Under"}
+        if "pick_type" in _lb_df.columns:
+            _lb_df["pick_type"] = _lb_df["pick_type"].map(
+                lambda x: _PICK_TYPE_LABELS_MP.get(x, x.title())
+            )
+        if "period" in _lb_df.columns:
+            _lb_df["period"] = (
+                _lb_df["period"].astype(str)
+                .str.replace(r" \d{2}:\d{2}:\d{2}", "", regex=True)
+                .str.strip()
+            )
+        st.dataframe(
+            _lb_df.rename(columns={
+                "model":        "Model",
+                "pick_type":    "Pick Type",
+                "total_bets":   "Bets",
+                "wins":         "Wins",
+                "losses":       "Losses",
+                "pushes":       "Pushes",
+                "win_rate":     "Win Rate",
+                "total_units":  "Units",
+                "max_drawdown": "Max Drawdown",
+                "roi":          "ROI",
+                "period":       "Period",
+            }),
+            hide_index=True,
+            width="stretch",
+        )
+
+        st.divider()
+
+        # ── Build a combined bets DataFrame ─────────────────────────────────
+        _mp_rows: list[dict] = []
+        for _mn, _btr in _bt.items():
+            for _b in _btr.bets:
+                _mp_rows.append({
+                    "model":        _mn,
+                    "date":         pd.to_datetime(_b.date),
+                    "profit_units": _b.profit_units,
+                    "result":       _b.result,
+                    "confidence":   _b.confidence,
+                })
+        _mp_df = pd.DataFrame(_mp_rows)
+        _mp_df["model"] = _mp_df["model"].str.title()
+        _mp_df["confidence"] = _mp_df["confidence"].str.title()
+
+        if not _mp_df.empty:
+            # ── Cumulative P&L comparison ────────────────────────────────────
+            st.markdown("### Cumulative P&L by Model")
+            _mp_df_sorted = _mp_df.sort_values(["model", "date"])
+            _mp_df_sorted = _mp_df_sorted.copy()
+            _mp_df_sorted["cum_units"] = _mp_df_sorted.groupby("model")["profit_units"].cumsum()
+            _mp_fig = px.line(
+                _mp_df_sorted,
+                x="date",
+                y="cum_units",
+                color="model",
+                title="Cumulative Units by Model",
+                labels={"date": "Date", "cum_units": "Cumulative Units", "model": "Model"},
+            )
+            _mp_fig.add_hline(y=0, line_dash="dot", line_color="gray")
+            st.plotly_chart(_mp_fig, width="stretch")
+
+            st.divider()
+
+            # ── Confidence tier breakdown ────────────────────────────────────
+            st.markdown("### Performance by Confidence Tier")
+            _tier_grp = (
+                _mp_df
+                .groupby(["model", "confidence"])
+                .agg(
+                    bets=("profit_units", "count"),
+                    wins=("result", lambda x: (x == "win").sum()),
+                    total_units=("profit_units", "sum"),
+                )
+                .reset_index()
+            )
+            _tier_grp["win_rate"] = (_tier_grp["wins"] / _tier_grp["bets"]).round(3)
+            _tier_grp["roi"]      = (_tier_grp["total_units"] / _tier_grp["bets"]).round(3)
+            st.dataframe(
+                _tier_grp.rename(columns={
+                    "model":       "Model",
+                    "confidence":  "Tier",
+                    "bets":        "Bets",
+                    "wins":        "Wins",
+                    "win_rate":    "Win Rate",
+                    "total_units": "Units",
+                    "roi":         "ROI/Bet",
+                }),
+                hide_index=True,
+                width="stretch",
+            )
+            _tier_bar = px.bar(
+                _tier_grp,
+                x="confidence",
+                y="roi",
+                color="model",
+                barmode="group",
+                title="ROI per Bet by Confidence Tier",
+                labels={"confidence": "Confidence", "roi": "ROI per Bet", "model": "Model"},
+            )
+            st.plotly_chart(_tier_bar, width="stretch")
+
+
+# ══════════════════════════════════════════════
+# TAB — Bankroll
+# ══════════════════════════════════════════════
+with tab_bankroll:
+    st.subheader("Bankroll Management")
+
+    _bk_left, _bk_right = st.columns(2)
+
+    # ── Kelly Calculator ─────────────────────────────────────────────────────
+    with _bk_left:
+        st.markdown("### Kelly Criterion Calculator")
+        _kc1, _kc2 = st.columns(2)
+        with _kc1:
+            _bankroll_size = st.number_input(
+                "Starting Bankroll ($)", min_value=100, max_value=1_000_000,
+                value=1000, step=100, key="bk_bankroll",
+            )
+            _unit_size = st.number_input(
+                "Unit Size ($)", min_value=1, max_value=100_000,
+                value=50, step=5, key="bk_unit",
+            )
+        with _kc2:
+            _kelly_conf = st.selectbox(
+                "Confidence Tier", ["High", "Medium", "Low"], key="bk_conf"
+            )
+            _kelly_odds = st.number_input(
+                "American Odds", min_value=-2000, max_value=2000,
+                value=-110, step=5, key="bk_odds",
+            )
+
+        _kelly_prob = st.slider(
+            "Win Probability",
+            min_value=0.30, max_value=0.80, value=0.55, step=0.01,
+            format="%.2f", key="bk_prob",
+        )
+
+        _full_kelly = _kelly_fraction(_kelly_prob, _kelly_odds)
+        _half_kelly = _full_kelly / 2.0
+        _qtr_kelly  = _full_kelly / 4.0
+        _tier_mults = {"High": 0.5, "Medium": 0.25, "Low": 0.10}
+        _tier_frac  = _full_kelly * _tier_mults[_kelly_conf]
+
+        _ck1, _ck2 = st.columns(2)
+        with _ck1:
+            st.metric("Full Kelly",    f"{_full_kelly:.2%}")
+            st.metric("Half Kelly",    f"{_half_kelly:.2%}")
+            st.metric("Quarter Kelly", f"{_qtr_kelly:.2%}")
+        with _ck2:
+            st.metric(f"{_kelly_conf.capitalize()} Tier Fraction", f"{_tier_frac:.2%}")
+            st.metric("Bet Size ($)",  f"${_bankroll_size * _tier_frac:,.2f}")
+            _bet_units = round(_bankroll_size * _tier_frac / _unit_size, 2) if _unit_size else 0
+            st.metric("Units to Bet",  f"{_bet_units:.2f}")
+
+        with st.expander("Kelly Formula Reference"):
+            st.latex(r"f^* = \frac{b \cdot p - q}{b}")
+            st.markdown(
+                "**b** = decimal odds − 1 &nbsp;·&nbsp; "
+                "**p** = win probability &nbsp;·&nbsp; "
+                "**q** = 1 − p  \n"
+                "Negative values mean no edge — don't bet. "
+                "Half-Kelly is recommended to reduce variance."
+            )
+
+    # ── Historical Bankroll Simulation ───────────────────────────────────────
+    with _bk_right:
+        st.markdown("### Historical Simulation")
+        _bt = st.session_state["eval_backtests"]
+        if _bt is None:
+            st.info("Run backtests to view the historical bankroll simulation.")
+        else:
+            _sim_start = st.number_input(
+                "Starting Bankroll ($)", min_value=100, max_value=1_000_000,
+                value=1000, step=100, key="bk_sim_bankroll",
+            )
+            _sim_unit = st.number_input(
+                "Unit Size ($)", min_value=1, max_value=100_000,
+                value=50, step=5, key="bk_sim_unit",
+            )
+            _sim_rows: list[dict] = []
+            for _mn, _btr in _bt.items():
+                _running = float(_sim_start)
+                for _b in sorted(_btr.bets, key=lambda x: str(x.date)):
+                    _running += _b.profit_units * _sim_unit
+                    _sim_rows.append({
+                        "model":    _mn.title(),
+                        "date":     pd.to_datetime(_b.date),
+                        "bankroll": _running,
+                    })
+            _sim_df = pd.DataFrame(_sim_rows)
+            if not _sim_df.empty:
+                _sim_fig = px.line(
+                    _sim_df, x="date", y="bankroll", color="model",
+                    title="Simulated Bankroll Growth",
+                    labels={"date": "Date", "bankroll": "Bankroll ($)", "model": "Model"},
+                )
+                _sim_fig.add_hline(
+                    y=_sim_start, line_dash="dot", line_color="gray",
+                    annotation_text="Starting bankroll",
+                )
+                st.plotly_chart(_sim_fig, width="stretch")
+
+                _final = (
+                    _sim_df.groupby("model")["bankroll"].last().reset_index()
+                )
+                _final["return_pct"] = (
+                    (_final["bankroll"] - _sim_start) / _sim_start * 100
+                ).round(1)
+                st.dataframe(
+                    _final.rename(columns={
+                        "model":      "Model",
+                        "bankroll":   "Final Bankroll ($)",
+                        "return_pct": "Return %",
+                    }),
+                    hide_index=True,
+                    width="stretch",
+                )
+
+    st.subheader("About Betting Cleanup")
+    st.markdown(
+        """
+**Betting Cleanup** is an MLB betting analytics platform that generates daily wagering
+recommendations, backtests predictive models, and presents results through this dashboard.
+
+---
+
+### How Picks Are Generated
+
+1. **Data Ingestion** — MLB game logs, player stats, odds, and weather data are fetched
+   daily from multiple free sources (MLB Stats API, Retrosheet, Baseball Savant).
+2. **Feature Engineering** — Batting and pitching performance metrics are aggregated
+   into a feature matrix spanning recent seasons.
+3. **Model Prediction** — XGBoost models generate win probabilities for each bet type.
+4. **Edge Calculation** — Predicted probabilities are compared against market-implied odds
+   to identify positive-expected-value opportunities.
+5. **Pick Filtering** — Only picks meeting minimum edge thresholds are surfaced.
+
+---
+
+### Models
+
+| Model | Target | Min Edge |
+|-------|--------|----------|
+| Underdog Moneyline | Upset probability (+120 or longer) | 2% |
+| Run Line (Spread) | Covers −1.5 / +1.5 | 2% |
+| Totals (Over/Under) | Goes over or under posted total | 2% |
+
+Each model is trained using walk-forward cross-validation to prevent data leakage.
+
+---
+
+### Confidence Tiers
+
+| Tier | Edge | Kelly Sizing |
+|------|------|--------------|
+| **HIGH** | > 6% | Half-Kelly |
+| **MEDIUM** | 3–6% | Quarter-Kelly |
+| **LOW** | 1–3% | Tracked only |
+
+---
+
+### Data Sources
+
+- **MLB Stats API** (`statsapi`) — Schedules, standings, pitcher stats (free, no key)
+- **ESPN API** — Live odds and scoreboard data (free public endpoint)
+- **Retrosheet** — Historical game logs and play-by-play data
+- **Baseball Savant** — Statcast metrics via `pybaseball`
+- **The Odds API** — Multi-book odds (API key required; 500 req/month free tier)
+
+---
+
+### Technology Stack
+
+Python 3.11 · Streamlit · XGBoost · LightGBM · pandas · Plotly · pyarrow
+
+---
+        """
+    )
+    # st.warning(
+    #     "**Responsible Gambling Notice:** This tool is for research and entertainment purposes "
+    #     "only. Past model performance does not guarantee future results. Never bet more than "
+    #     "you can afford to lose. If gambling is affecting your life, please seek help at "
+    #     "**1-800-522-4700** (National Problem Gambling Helpline).",
+    #     icon="⚠️",
+    # )
 
 
 # ── Footer ───────────────────────────────────────────────────────────────────
