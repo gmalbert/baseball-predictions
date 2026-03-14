@@ -2,7 +2,7 @@
 
 Multi-page Streamlit app providing daily picks, model performance, and bankroll tracking.  
 
-> **Status:** ❌ *No Streamlit code currently exists in the repository; the following sections describe the intended layout and wireframes for a future build.*
+> **Status:** ✅ *Streamlit UI is now implemented in `predictions.py` (Daily Schedule tab + analytics tabs). Remaining pages are planned as described below.*
 
 ---
 
@@ -43,13 +43,15 @@ Multi-page Streamlit app providing daily picks, model performance, and bankroll 
     └── config.toml
 ```
 
-> *Current repository only contains a top‑level `.streamlit/` folder; all Streamlit code must be added.*
+> *The repository now includes `predictions.py` with a working Daily Schedule tab and supporting dashboard tabs. The multi-page framework described below remains a future enhancement.*
 
 ---
 
 ## Page Wireframes
 
 ### 1. Today's Picks
+
+> ✅ **Implemented:** the app currently includes a **Daily Schedule** tab (in `predictions.py`) with game details, odds, and head-to-head history.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -79,6 +81,10 @@ Multi-page Streamlit app providing daily picks, model performance, and bankroll 
 
 ### 2. Model Performance Dashboard
 
+> ✅ **Implemented:** corresponds to the **Models** tab in `predictions.py`.
+
+> ✅ **Implemented:** this is available as the **Models** tab in `predictions.py`.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  MODEL PERFORMANCE          Period: [Last 30 days ▾]         │
@@ -103,6 +109,8 @@ Multi-page Streamlit app providing daily picks, model performance, and bankroll 
 ```
 
 ### 3. Historical Ledger
+
+> ✅ **Implemented** — available as the **📋 Pick History** tab in `predictions.py`. Flattens backtest bets into a filterable ledger with cumulative P&L chart and summary metrics. Will automatically display live picks once the daily pipeline runs.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -185,6 +193,8 @@ st.markdown(
 
 ## 5. Today's Picks Page  
 
+> ✅ **Partially implemented:** The current `predictions.py` includes a Daily Schedule / game detail tab that covers this functionality (game list + odds + head-to-head). It is not yet a separate `streamlit_app/pages/1_Todays_Picks.py` module.
+
 > **Note:** The following code is illustrative; no corresponding Python files exist yet.
 
 ```python
@@ -266,6 +276,8 @@ def _render_pick_row(pick: pd.Series):
 
 ## 6. Pick History Page
 
+> ✅ **Implemented** — available as the **📋 Pick History** tab in `predictions.py`.
+
 ```python
 # streamlit_app/pages/2_Pick_History.py
 """Historical pick results ledger."""
@@ -327,6 +339,8 @@ st.dataframe(
 ---
 
 ## 7. Model Performance Page
+
+> ✅ **Implemented** — available as the **🏆 Model Performance** tab in `predictions.py`. Shows a backtest leaderboard, cumulative P&L chart per model, and a confidence-tier breakdown table + bar chart.
 
 ```python
 # streamlit_app/pages/3_Model_Performance.py
@@ -425,6 +439,8 @@ if not conf_df.empty:
 
 ## 8. Bankroll Page
 
+> ✅ **Implemented** — available as the **💰 Bankroll** tab in `predictions.py`. Includes a Kelly Criterion calculator (full/half/quarter Kelly + tier-based sizing) and a historical bankroll simulation chart built from backtest data. No external `BankrollTracker` class is required.
+
 ```python
 # streamlit_app/pages/4_Bankroll.py
 """Bankroll tracking and risk management dashboard."""
@@ -502,6 +518,8 @@ else:
 
 ## 9. About Page
 
+> ✅ **Implemented** — available as the **ℹ️ About** tab in `predictions.py`. Contains methodology overview, model summary table, confidence tier table, data sources, tech stack, and a responsible gambling notice.
+
 ```python
 # streamlit_app/pages/5_About.py
 """About and methodology page."""
@@ -558,6 +576,8 @@ st.warning(
 ---
 
 ## 10. Reusable Components
+
+> ✅ **Partially implemented** — `_kelly_fraction(prob, american_odds)` is defined as a reusable helper in `predictions.py` and is used by the Bankroll tab. The `streamlit_app/components/` folder structure is planned for a future refactor but is not required while the app lives in a single file.
 
 ### Pick Card Helpers
 
@@ -643,19 +663,6 @@ def roi_by_confidence_chart(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(template="plotly_white", height=350)
     return fig
 ```
-
----
-
-## 11. Running the App
-
-```bash
-# From project root
-streamlit run streamlit_app/app.py
-
-# Or with custom port
-streamlit run streamlit_app/app.py --server.port 8501
-```
-
 ---
 
 > **Next:** [09-deployment-ops.md](09-deployment-ops.md) – Getting it live.
