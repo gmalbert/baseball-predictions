@@ -2563,6 +2563,7 @@ with tab_bankroll:
                     width="stretch",
                 )
 
+with tab_about:
     st.subheader("About Betting Cleanup")
     st.markdown(
         """
