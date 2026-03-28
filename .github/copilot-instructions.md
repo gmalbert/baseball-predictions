@@ -90,6 +90,14 @@ Three XGBoost models, each targeting a different bet type:
 
 Models are trained with `scikit-learn` pipelines and serialized with `joblib`.
 
+## Current App Flow Updates
+
+- Streamlit entry is `predictions.py` (home + 6 pages: Today, Stats, Matchup Analysis, Models, Performance, About)
+- Home page now provides per-game actionable recommendations:
+  - Moneyline (team + odds + edge), run line (side + odds + edge), over/under (line + odds + edge)
+  - Badge signal: ✅ BET, ➡ LEAN, ⛔ PASS
+- `page_utils._fetch_espn_odds()` now uses live ESPN core event odds endpoint fallback for full market spread data when scoreboard odds are missing.
+
 ## Confidence Tiers
 
 - **HIGH** — Edge > 6%, strong model agreement, half-Kelly sizing
