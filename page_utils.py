@@ -137,7 +137,28 @@ def _fetch_todays_schedule() -> list[dict]:
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def _load_latest_odds() -> pd.DataFrame:
-    """Load the most-recent Odds API CSV, or empty DataFrame if none exist."""
+    """Return today's odds — live from The Odds API if ODDS_API_KEY is set,
+    otherwise fall back to the most-recent saved CSV."""
+    import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env", override=False)
+    except ImportError:
+        pass
+    api_key = os.environ.get("ODDS_API_KEY", "")
+    if not api_key:
+        try:
+            api_key = st.secrets.get("ODDS_API_KEY", "")
+        except Exception:
+            api_key = ""
+    if api_key:
+        try:
+            from src.ingestion.odds import fetch_current_odds
+            return fetch_current_odds()
+        except Exception:
+            pass  # fall through to saved CSV
+
+    # Fallback: most-recent saved file
     odds_dir = ROOT / "data_files" / "raw" / "odds"
     if not odds_dir.exists():
         return pd.DataFrame()
@@ -147,21 +168,251 @@ def _load_latest_odds() -> pd.DataFrame:
     return pd.read_csv(files[-1])
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _fetch_team_standings() -> dict[str, dict]:
-    """Current-season W/L records via the free MLB Stats API."""
+# ─── Game Context Helpers ─────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _load_game_context_cache() -> dict:
+    """Precompute per-team context metrics from Retrosheet.
+
+    Returns dict with keys:
+        park_factors    – {retro_short_name: float}  run-environment factor vs league avg
+        ump_park_avg    – {retro_short_name: float}  hist avg total runs/game at this home park
+        daynight        – {retro_short_name: {"day": wpct, "night": wpct}}
+        bullpen_ip_pg   – {retro_short_name: float}  avg relief IP per game (last 2 seasons)
+        platoon         – {retro_short_name: {"pct_left": float, "pct_right": float}}
+    All keys use Retrosheet short names ("Cubs", "Yankees") to match _MLB_TO_RETRO output.
+    """
+    _RETRO = ROOT / "data_files" / "retrosheet"
+    # Inverse map: 3-letter code → short name  (most recent code wins for dupes)
+    _code_to_short = {k: v for k, v in TEAM_NAMES.items()}
+    out: dict = {
+        "park_factors": {},
+        "ump_park_avg": {},
+        "daynight": {},
+        "bullpen_ip_pg": {},
+        "platoon": {},
+    }
+
+    # ── Park factors & day/night from gameinfo.parquet ─────────────────────
     try:
-        standings = statsapi.standings_data()
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        gi["vruns"] = pd.to_numeric(gi["vruns"], errors="coerce")
+        gi["hruns"] = pd.to_numeric(gi["hruns"], errors="coerce")
+        gi["total_runs"] = gi["vruns"] + gi["hruns"]
+        max_szn = int(gi["season"].max())
+        recent = gi[gi["season"] >= max_szn - 2].copy()
+        league_rpg = recent["total_runs"].mean()
+
+        park = (
+            recent.groupby("hometeam")
+            .agg(games=("gid", "count"), runs=("total_runs", "sum"))
+            .reset_index()
+        )
+        park = park[park["games"] >= 20]
+        park["pf"] = (park["runs"] / park["games"] / league_rpg).round(3)
+        park["short"] = park["hometeam"].map(_code_to_short)
+        out["park_factors"] = dict(zip(park["short"], park["pf"]))
+
+        # Day/night splits
+        if "wteam" in gi.columns and "daynight" in gi.columns:
+            dn_rows = []
+            for team_col in ("visteam", "hometeam"):
+                tmp = gi[["season", team_col, "daynight", "wteam"]].copy()
+                tmp.columns = ["season", "team", "dn", "wteam"]
+                tmp["won"] = (tmp["wteam"] == tmp["team"]).astype(int)
+                dn_rows.append(tmp)
+            dn = pd.concat(dn_rows, ignore_index=True)
+            dn["dn"] = dn["dn"].fillna("n").str.lower().str.strip()
+            dn = dn[dn["season"] >= max_szn - 2]
+            grp = (
+                dn.groupby(["team", "dn"])
+                .agg(games=("won", "count"), wins=("won", "sum"))
+                .reset_index()
+            )
+            grp["wpct"] = (grp["wins"] / grp["games"].clip(lower=1)).round(3)
+            grp["short"] = grp["team"].map(_code_to_short)
+            for _, row in grp.iterrows():
+                short = row["short"]
+                if not short:
+                    continue
+                if short not in out["daynight"]:
+                    out["daynight"][short] = {}
+                out["daynight"][short][row["dn"]] = row["wpct"]
+    except Exception:
+        pass
+
+    # ── Umpire park averages from gameinfo.csv ──────────────────────────────
+    try:
+        gi_csv = pd.read_csv(
+            _RETRO / "gameinfo.csv", low_memory=False,
+            usecols=lambda c: c in {"gid", "hometeam", "umphome", "vruns", "hruns", "season"},
+        )
+        gi_csv["season"] = pd.to_numeric(gi_csv["season"], errors="coerce")
+        gi_csv["vruns"] = pd.to_numeric(gi_csv["vruns"], errors="coerce")
+        gi_csv["hruns"] = pd.to_numeric(gi_csv["hruns"], errors="coerce")
+        gi_csv["total_runs"] = gi_csv["vruns"] + gi_csv["hruns"]
+        max_csv_szn = int(gi_csv["season"].dropna().max())
+        recent_csv = gi_csv[gi_csv["season"] >= max_csv_szn - 2]
+        ump_park = (
+            recent_csv.groupby("hometeam")["total_runs"]
+            .agg(["mean", "count"])
+            .reset_index()
+        )
+        ump_park.columns = ["team", "avg_runs", "games"]
+        ump_park = ump_park[ump_park["games"] >= 20]
+        ump_park["short"] = ump_park["team"].map(_code_to_short)
+        out["ump_park_avg"] = {
+            r["short"]: round(r["avg_runs"], 2)
+            for _, r in ump_park.iterrows()
+            if r.get("short")
+        }
+    except Exception:
+        pass
+
+    # ── Bullpen IP per game from pitching.parquet ───────────────────────────
+    try:
+        p = pd.read_parquet(_RETRO / "pitching.parquet")
+        p = p[p["p_gs"] != 1.0].copy()          # relief only
+        p["season"] = pd.to_numeric(p["date"].astype(str).str[:4], errors="coerce")
+        max_p = int(p["season"].dropna().max())
+        p = p[p["season"] >= max_p - 1]
+        p["ip"] = pd.to_numeric(p["p_ipouts"], errors="coerce").fillna(0) / 3
+        bp = (
+            p.groupby("team")
+            .agg(total_ip=("ip", "sum"), total_games=("gid", "nunique"))
+            .reset_index()
+        )
+        bp["ip_pg"] = (bp["total_ip"] / bp["total_games"].clip(lower=1)).round(2)
+        bp["short"] = bp["team"].map(_code_to_short)
+        out["bullpen_ip_pg"] = {
+            r["short"]: r["ip_pg"] for _, r in bp.iterrows() if r.get("short")
+        }
+    except Exception:
+        pass
+
+    # ── Platoon (% left-handed batters per team) from allplayers.parquet ───
+    try:
+        ap = pd.read_parquet(_RETRO / "allplayers.parquet")
+        if "season" in ap.columns and "bat" in ap.columns and "team" in ap.columns:
+            max_ap = int(ap["season"].dropna().max())
+            ap = ap[ap["season"] >= max_ap - 1]
+            plat = (
+                ap.groupby("team")
+                .apply(lambda d: pd.Series({
+                    "pct_left": round((d["bat"] == "L").mean(), 3),
+                    "pct_right": round((d["bat"] == "R").mean(), 3),
+                }))
+                .reset_index()
+            )
+            plat["short"] = plat["team"].map(_code_to_short)
+            out["platoon"] = {
+                r["short"]: {"pct_left": r["pct_left"], "pct_right": r["pct_right"]}
+                for _, r in plat.iterrows()
+                if r.get("short")
+            }
+    except Exception:
+        pass
+
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_pitcher_throw_hand(pitcher_name: str) -> str:
+    """Return pitcher throwing hand: 'L', 'R', or '?' via statsapi."""
+    if not pitcher_name or pitcher_name.strip().upper() == "TBD":
+        return "?"
+    try:
+        results = statsapi.lookup_player(pitcher_name)
+        if not results:
+            return "?"
+        data = statsapi.get("people", {"personIds": results[0]["id"]})
+        if data and data.get("people"):
+            return data["people"][0].get("pitchHand", {}).get("code", "?")
+    except Exception:
+        pass
+    return "?"
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_team_il_players(team_full_name: str) -> list[str]:
+    """Return list of IL player names for a team via statsapi injured list roster."""
+    try:
+        results = statsapi.lookup_team(team_full_name)
+        if not results:
+            return []
+        team_id = results[0]["id"]
+        roster = statsapi.get("roster", {"teamId": team_id, "rosterType": "injuredList"})
+        return [p["person"]["fullName"] for p in roster.get("roster", [])]
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_team_rest_days(team_full_name: str) -> int | None:
+    """Return days since the team's last game (0 = back-to-back, None = unknown)."""
+    try:
+        results = statsapi.lookup_team(team_full_name)
+        if not results:
+            return None
+        team_id = results[0]["id"]
+        today = datetime.date.today()
+        start = (today - datetime.timedelta(days=10)).strftime("%m/%d/%Y")
+        end   = (today - datetime.timedelta(days=1)).strftime("%m/%d/%Y")
+        sched = statsapi.schedule(teamId=team_id, startDate=start, endDate=end) or []
+        played = sorted([
+            datetime.date.fromisoformat(g["game_date"])
+            for g in sched
+            if g.get("game_date") and g.get("status") not in ("Postponed", "Cancelled", "Suspended")
+        ])
+        if not played:
+            return None
+        return (today - played[-1]).days
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_team_standings(season: int | None = None) -> dict[str, dict]:
+    """Current-season W/L records via the free MLB Stats API.
+
+    If the current season has no games played yet (Opening Day / pre-season),
+    falls back to the prior season's final standings so win-probability bars
+    show meaningful differentiation rather than a flat 58/42 for every game.
+    """
+    import datetime as _dt
+
+    def _parse(raw_standings) -> dict[str, dict]:
         result: dict[str, dict] = {}
-        for _div_id, div_data in standings.items():
+        for _div_id, div_data in raw_standings.items():
             for team in div_data.get("teams", []):
+                w = team.get("w", 0) or 0
+                l = team.get("l", 0) or 0
+                pct = team.get("pct")
+                if pct is None or pct == "—" or pct == "":
+                    pct = round(w / (w + l), 3) if (w + l) > 0 else 0.500
                 result[team["name"]] = {
-                    "W":      team.get("w", "—"),
-                    "L":      team.get("l", "—"),
-                    "pct":    team.get("pct", "—"),
+                    "W":      w,
+                    "L":      l,
+                    "pct":    pct,
                     "streak": team.get("streak", "—"),
                     "L10":    team.get("lastTen", "—"),
                 }
+        return result
+
+    try:
+        cur_season = season or _dt.date.today().year
+        result = _parse(statsapi.standings_data(season=cur_season))
+
+        # If no team has won a game yet, fall back to prior season
+        total_wins = sum(
+            int(v["W"]) for v in result.values()
+            if str(v.get("W", "—")).isdigit()
+        )
+        if total_wins == 0 and season is None:
+            prior = _parse(statsapi.standings_data(season=cur_season - 1))
+            if prior:
+                return prior
+
         return result
     except Exception:
         return {}
@@ -411,7 +662,10 @@ def _estimate_win_prob(home_full: str, away_full: str,
     def _pct(name: str) -> float:
         data = live_standings.get(name, {})
         try:
-            return float(str(data.get("pct", "0.500")).replace("—", "0.500") or "0.500")
+            val = data.get("pct", 0.500)
+            if isinstance(val, (int, float)):
+                return float(val) if float(val) > 0 else 0.500
+            return float(str(val).replace("—", "0.500") or "0.500")
         except (ValueError, TypeError):
             return 0.500
 
@@ -463,17 +717,19 @@ def render_sidebar(show_year_filter: bool = True) -> tuple[int, int]:
         if show_year_filter:
             st.markdown("---")
             st.header("Season Filters")
+            _cur_year = datetime.date.today().year
             min_year, max_year = st.slider(
                 "Season range",
                 min_value=2020,
-                max_value=2025,
-                value=(2020, 2025),
+                max_value=_cur_year,
+                value=(2020, _cur_year),
                 step=1,
             )
             st.caption(f"Using {min_year}–{max_year} regular-season games.")
             return min_year, max_year
 
-    return 2020, 2025
+    _cur_year = datetime.date.today().year
+    return 2020, _cur_year
 
 
 # ─── Session State ────────────────────────────────────────────────────────────

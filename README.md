@@ -8,12 +8,13 @@ MLB betting analytics platform for daily wagering insights, model backtesting, a
 
 - **Dashboard engine:** `predictions.py` (Streamlit home + 6 feature pages)
 - **UX pages:**
-  - `pages/1_Today.py` — Today (schedule & game drill-down)
+  - `pages/1_Today.py` — Today (schedule & game drill-down, game context factors, weather + odds, deep dive link)
   - `pages/2_Stats.py` — Stats (standings, team batting/pitching, leaders)
   - `pages/3_Matchup_Analysis.py` — Matchup Analysis (H2H & rolling form)
   - `pages/4_Models.py` — Models (features, model importances, calibration, Savant research)
   - `pages/5_Performance.py` — Performance (pick history, P/L, bankroll/Kelly calculator)
-  - `pages/6_Info.py` — About (methodology, sources, tech stack)
+  - `pages/6_Pick_6.py` — Pick 6 (player prop probabilities, DK optimizer, season leaders)
+  - `pages/7_Info.py` — About (methodology, sources, tech stack)
 
 - **Shared utilities:** `page_utils.py` (data loader, odds integration, plot helpers, formatting, sidebar)
 - **Data source directory:** `data_files/` (`raw/` CSVs + `processed/` Parquet)
@@ -25,6 +26,8 @@ MLB betting analytics platform for daily wagering insights, model backtesting, a
   - Daily game schedule with lineups, SP matchup, status
   - Per-game recommendations (Moneyline, Run Line, Over/Under)
   - Odds harvest from ESPN live API (plus ESPN core event odds fallback)
+  - Live Odds API multi-book feed via `ODDS_API_KEY` / `st.secrets` and auto fallback to saved CSV
+  - Deep link button to game detail page on Today from main Home card
   - Edge-based bet signal (✅ BET, ➡ LEAN, ⛔ PASS)
   - Historical expected totals via Retrosheet `RS_per_G`
   - One-click page navigation tiles to deeper analysis
@@ -33,6 +36,8 @@ MLB betting analytics platform for daily wagering insights, model backtesting, a
 - Standings and team-level offensive/defensive boxscore trends
 - Batting/pitching leaderboards with year filters and interactive charts
 - Head-to-head series history and 30/60/90-day rolling records
+- Game Context factors in Today detail view:
+  - park factor, umpire park run environment, bullpen workload, platoon advantage, rest days, IL list
 - Line movement, heavy favorite reactions, and situational splits
 
 ### ML Models and Backtest

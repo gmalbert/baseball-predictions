@@ -12,6 +12,7 @@ Users see instant page loads — all computation happens here, offline.
 import sys
 import warnings
 from pathlib import Path
+import datetime
 
 warnings.filterwarnings("ignore")
 
@@ -32,7 +33,7 @@ from retrosheet import (
 from src.models.features import build_model_features
 
 MIN_YEAR = 2000
-MAX_YEAR = 2025
+MAX_YEAR = datetime.date.today().year
 
 
 def _save(df, name: str) -> None:

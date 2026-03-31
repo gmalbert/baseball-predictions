@@ -21,6 +21,30 @@ min_year, max_year = render_sidebar()
 _pre = _load_precomputed()
 _gi  = _pre["gameinfo"][_pre["gameinfo"]["season"].between(min_year, max_year)].copy()
 
+def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
+    """
+    Calculate the optimal height for a Streamlit dataframe based on number of rows.
+    
+    Args:
+        df (pd.DataFrame): The dataframe to display
+        row_height (int): Height per row in pixels. Default: 35
+        header_height (int): Height of header row in pixels. Default: 38
+        padding (int): Extra padding in pixels. Default: 2
+        max_height (int): Maximum height cap in pixels. Default: 600 (None for no limit)
+    
+    Returns:
+        int: Calculated height in pixels
+    
+    Example:
+        height = get_dataframe_height(my_df)
+        st.dataframe(my_df, height=height)
+    """
+    num_rows = len(df)
+    calculated_height = (num_rows * row_height) + header_height + padding
+    
+    if max_height is not None:
+        return min(calculated_height, max_height)
+    return calculated_height
 
 def _code_to_name(c: str) -> str:
     return TEAM_NAMES.get(str(c).upper(), c)

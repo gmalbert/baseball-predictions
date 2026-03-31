@@ -6,6 +6,8 @@ This document catalogs every data source we will use (or can optionally add), wh
 
 ## 1. MLB Stats API (free, official)
 
+✅ **Implemented**: used in `page_utils._fetch_todays_schedule`, `_fetch_team_standings`, `_fetch_pitcher_stats` and in many pages (`pages/1_Today.py`, etc.).
+
 The **official MLB Stats API** (`statsapi.mlb.com`) is the single richest free source. Two excellent Python wrappers exist:
 
 | Library | Repo | Notes |
@@ -51,6 +53,8 @@ print(stats["stats"][0]["stats"])  # dict with AVG, HR, OPS, etc.
 ---
 
 ## 2. Baseball Savant / Statcast (free)
+
+✅ **Implemented**: raw savant data present in `data_files/raw/batting/savant_batter_2020_2025.csv` and used by ingestion scripts (`scripts/build_savant_model.py`).
 
 <https://baseballsavant.mlb.com>
 
@@ -99,6 +103,8 @@ team_pit = team_pitching(2025)
 ---
 
 ## 3. Retrosheet (free, historical)
+
+✅ **Implemented**: core system uses `data_files/retrosheet/*.parquet` with functions in `src/retrosheet.py` and model feature pipelines.
 
 <https://retrosheet.org/downloads/csvdownloads.html>
 
@@ -160,6 +166,8 @@ for year in range(2021, 2026):
 ---
 
 ## 4. Odds & Lines Data
+
+✅ **Implemented**: page_utils has `_load_latest_odds()` reading `data_files/raw/odds`, plus ESPN odds fallback in `_fetch_espn_odds`.
 
 ### 4a. The Odds API (freemium)
 <https://the-odds-api.com/>
