@@ -5,6 +5,7 @@ and exposes clean DataFrames for dashboard consumption.
 """
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -57,7 +58,7 @@ def _extract_year(series: pd.Series) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False)
-def load_gameinfo(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def load_gameinfo(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """
     Loads gameinfo.csv and returns one row per game with key fields.
     Filters to regular-season games within [min_year, max_year].
@@ -97,7 +98,7 @@ _TEAMSTATS_COLS = [
 
 
 @st.cache_data(show_spinner=False)
-def load_teamstats(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def load_teamstats(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """
     Loads teamstats.csv (value rows only), filters to regular season,
     and computes derived rate stats (BA, OBP, SLG, OPS, ERA, WHIP, etc.).
@@ -159,7 +160,7 @@ _BAT_COLS = [
 
 
 @st.cache_data(show_spinner=False)
-def load_batting(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def load_batting(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
     df = pd.read_parquet(RAW_DIR / "batting.parquet")
     cols = [c for c in _BAT_COLS if c in df.columns]
@@ -188,7 +189,7 @@ _PITCH_COLS = [
 
 
 @st.cache_data(show_spinner=False)
-def load_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def load_pitching(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
     df = pd.read_parquet(RAW_DIR / "pitching.parquet")
     cols = [c for c in _PITCH_COLS if c in df.columns]
@@ -212,7 +213,7 @@ def load_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> pd.Data
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False)
-def load_players(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def load_players(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
     df = pd.read_parquet(RAW_DIR / "allplayers.parquet")
     df["season"] = pd.to_numeric(df["season"], errors="coerce")
@@ -226,7 +227,7 @@ def load_players(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataF
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False)
-def season_team_batting(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def season_team_batting(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """Aggregate team batting stats by season."""
     df = load_teamstats(min_year, max_year)
     agg = df.groupby(["season", "team"]).agg(
@@ -251,7 +252,7 @@ def season_team_batting(min_year: int = MODERN_START, max_year: int = 2025) -> p
 
 
 @st.cache_data(show_spinner=False)
-def season_team_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def season_team_pitching(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """Aggregate team pitching stats by season."""
     df = load_teamstats(min_year, max_year)
     agg = df.groupby(["season", "team"]).agg(
@@ -276,7 +277,7 @@ def season_team_pitching(min_year: int = MODERN_START, max_year: int = 2025) -> 
 
 
 @st.cache_data(show_spinner=False)
-def season_standings(min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def season_standings(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """W/L standings per team per season with run differential (vectorized)."""
     gi = load_gameinfo(min_year, max_year)
 
@@ -320,7 +321,7 @@ def season_standings(min_year: int = MODERN_START, max_year: int = 2025) -> pd.D
 
 
 @st.cache_data(show_spinner=False)
-def head_to_head(team_a: str, team_b: str, min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def head_to_head(team_a: str, team_b: str, min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """All games between two franchises in the date window."""
     gi = load_gameinfo(min_year, max_year)
     mask = (
@@ -335,7 +336,7 @@ def head_to_head(team_a: str, team_b: str, min_year: int = MODERN_START, max_yea
 
 
 @st.cache_data(show_spinner=False)
-def rolling_team_form(team: str, window: int = 10, min_year: int = MODERN_START, max_year: int = 2025) -> pd.DataFrame:
+def rolling_team_form(team: str, window: int = 10, min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """Rolling N-game averages for a single team (runs scored/allowed, win rate)."""
     gi = load_gameinfo(min_year, max_year)
     vis = gi[gi["visteam"] == team][["date", "season", "vruns", "hruns", "wteam"]].copy()
@@ -351,7 +352,7 @@ def rolling_team_form(team: str, window: int = 10, min_year: int = MODERN_START,
 
 
 @st.cache_data(show_spinner=False)
-def season_batting_leaders(min_year: int = MODERN_START, max_year: int = 2025, min_pa: int = 300) -> pd.DataFrame:
+def season_batting_leaders(min_year: int = MODERN_START, max_year: int = datetime.date.today().year, min_pa: int = 300) -> pd.DataFrame:
     """Individual batter season totals, filtered to qualified hitters."""
     bat = load_batting(min_year, max_year)
     agg = bat.groupby(["season", "id", "team"]).agg(
@@ -372,7 +373,7 @@ def season_batting_leaders(min_year: int = MODERN_START, max_year: int = 2025, m
 
 
 @st.cache_data(show_spinner=False)
-def season_pitching_leaders(min_year: int = MODERN_START, max_year: int = 2025, min_ip: float = 100.0) -> pd.DataFrame:
+def season_pitching_leaders(min_year: int = MODERN_START, max_year: int = datetime.date.today().year, min_ip: float = 100.0) -> pd.DataFrame:
     """Individual pitcher season totals, filtered to qualified starters."""
     pit = load_pitching(min_year, max_year)
     agg = pit.groupby(["season", "id", "team"]).agg(
@@ -399,7 +400,7 @@ def season_pitching_leaders(min_year: int = MODERN_START, max_year: int = 2025, 
 
 
 @st.cache_data(show_spinner=False)
-def team_list(min_year: int = MODERN_START, max_year: int = 2025) -> list[str]:
+def team_list(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> list[str]:
     gi = load_gameinfo(min_year, max_year)
     teams = sorted(set(gi["visteam"].dropna()) | set(gi["hometeam"].dropna()))
     return teams

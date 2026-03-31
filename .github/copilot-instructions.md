@@ -92,11 +92,16 @@ Models are trained with `scikit-learn` pipelines and serialized with `joblib`.
 
 ## Current App Flow Updates
 
-- Streamlit entry is `predictions.py` (home + 6 pages: Today, Stats, Matchup Analysis, Models, Performance, About)
+- Streamlit entry is `predictions.py` (home + 7 pages: Today, Stats, Matchup Analysis, Models, Performance, Pick 6, About)
 - Home page now provides per-game actionable recommendations:
   - Moneyline (team + odds + edge), run line (side + odds + edge), over/under (line + odds + edge)
   - Badge signal: ✅ BET, ➡ LEAN, ⛔ PASS
+  - Deep link button to Today game detail from each home card (channel: `schedule_selected_game` + `st.switch_page`)
 - `page_utils._fetch_espn_odds()` now uses live ESPN core event odds endpoint fallback for full market spread data when scoreboard odds are missing.
+- `page_utils._load_latest_odds()` now first checks `ODDS_API_KEY` (env or secrets), calls `src.ingestion.odds.fetch_current_odds()`, and falls back to latest saved odds CSV.
+- `pages/1_Today.py` adds game context factors:
+  - Park factor, umpire runs/g, bullpen IP/G, platoon matchup, rest days, day/night win%, IL list
+- `pages/6_Pick_6.py` now provides DK player prop calculator + top scoreboard + season leaders for 6 event categories
 
 ## Confidence Tiers
 

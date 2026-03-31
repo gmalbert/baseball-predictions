@@ -31,6 +31,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pandas as pd
+from datetime import date as _date
+
+_CUR_YEAR = _date.today().year
 
 PROCESSED = ROOT / "data_files" / "processed"
 PROCESSED.mkdir(parents=True, exist_ok=True)
@@ -51,7 +54,7 @@ def build_savant_enriched_features(
     n_bat: int = 8,
     n_pit: int = 6,
     min_year: int = 2020,
-    max_year: int = 2025,
+    max_year: int = _CUR_YEAR,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Combine Retrosheet game features with top Savant aggregates.
 

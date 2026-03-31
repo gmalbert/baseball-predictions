@@ -52,6 +52,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
+    """
+    Calculate the optimal height for a Streamlit dataframe based on number of rows.
+    
+    Args:
+        df (pd.DataFrame): The dataframe to display
+        row_height (int): Height per row in pixels. Default: 35
+        header_height (int): Height of header row in pixels. Default: 38
+        padding (int): Extra padding in pixels. Default: 2
+        max_height (int): Maximum height cap in pixels. Default: 600 (None for no limit)
+    
+    Returns:
+        int: Calculated height in pixels
+    
+    Example:
+        height = get_dataframe_height(my_df)
+        st.dataframe(my_df, height=height)
+    """
+    num_rows = len(df)
+    calculated_height = (num_rows * row_height) + header_height + padding
+    
+    if max_height is not None:
+        return min(calculated_height, max_height)
+    return calculated_height
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,32 +146,71 @@ def _build_game_recs(
         except (TypeError, ValueError):
             pass
 
-    # -- Run Line (+-1.5): P(home covers -1.5) ≈ home_prob^1.4 --
+    # -- Run Line (+-1.5): favorite covers -1.5; underdog covers +1.5 --
     spread_h_raw = espn_game.get("spread_home")
     spread_a_raw = espn_game.get("spread_away", "—")
-    home_rl = home_prob ** 1.4
-    away_rl = 1.0 - home_rl
+
+    def _parse_american(raw) -> int | None:
+        try:
+            return int(str(raw).replace("+", ""))
+        except (ValueError, TypeError):
+            return None
+
+    spread_h_val = _parse_american(spread_h_raw)
+    spread_a_val = _parse_american(spread_a_raw)
+
+    # Use moneyline odds to determine who is the run-line (-1.5) favorite.
+    # Lower (more negative) American ML odds = stronger favorite = they give -1.5.
+    # Fall back to spread-odds heuristic: the -1.5 team gets POSITIVE return odds
+    # because covering 1.5 runs is harder; the +1.5 team pays negative juice.
+    ml_h_val = _parse_american(espn_game.get("ml_home"))
+    ml_a_val = _parse_american(espn_game.get("ml_away"))
+
+    if ml_h_val is not None and ml_a_val is not None:
+        home_favorite = ml_h_val < ml_a_val
+    elif spread_h_val is not None and spread_a_val is not None:
+        # Positive spread odds → that team is the -1.5 side
+        home_favorite = spread_h_val > 0 and spread_a_val <= 0
+    else:
+        home_favorite = False
+
+    if home_favorite:
+        home_rl = home_prob ** 1.4
+        away_rl = 1.0 - home_rl
+        home_pick = f"{_short(home_full)} −1.5"
+        away_pick = f"{_short(away_full)} +1.5"
+    else:
+        away_rl = away_prob ** 1.4
+        home_rl = 1.0 - away_rl
+        home_pick = f"{_short(home_full)} +1.5"
+        away_pick = f"{_short(away_full)} −1.5"
+
     if spread_h_raw and str(spread_h_raw) not in ("—", "", "None"):
         try:
-            sho    = int(str(spread_h_raw).replace("+", ""))
+            sho    = _parse_american(spread_h_raw)
+            if sho is None:
+                raise ValueError
             impl_h = _american_to_implied_prob(sho)
             if spread_a_raw and str(spread_a_raw) not in ("—", "", "None"):
-                sao    = int(str(spread_a_raw).replace("+", ""))
+                sao = _parse_american(spread_a_raw)
+                if sao is None:
+                    raise ValueError
                 impl_a = _american_to_implied_prob(sao)
                 away_odds_str = f"+{sao}" if sao >= 0 else str(sao)
             else:
                 impl_a = 1.0 - impl_h
                 away_odds_str = "—"
+
             recs["rl"] = {
                 "home": {
-                    "pick":     f"{_short(home_full)} −1.5",
+                    "pick":     home_pick,
                     "odds_str": f"+{sho}" if sho >= 0 else str(sho),
                     "impl":     impl_h,
                     "est_prob": home_rl,
                     "edge":     home_rl - impl_h,
                 },
                 "away": {
-                    "pick":     f"{_short(away_full)} +1.5",
+                    "pick":     away_pick,
                     "odds_str": away_odds_str,
                     "impl":     impl_a,
                     "est_prob": away_rl,
@@ -417,6 +480,16 @@ def home_page() -> None:
                     else:
                         st.caption("— odds unavailable —")
 
+                # ── Deep-dive link ──
+                st.markdown("")
+                if st.button(
+                    "🔍 View Full Game Details →",
+                    key=f"home_detail_{idx}",
+                    use_container_width=True,
+                ):
+                    st.session_state["schedule_selected_game"] = g
+                    st.switch_page("pages/1_Today.py")
+
     st.markdown("---")
 
     # Navigation tiles
@@ -439,7 +512,7 @@ def home_page() -> None:
     tiles2 = [
         ("🤖", "Models",      "XGBoost features · Evaluation · Savant research",  "pages/4_Models.py"),
         ("📈", "Performance", "Pick history · Model P&L · Kelly bankroll",         "pages/5_Performance.py"),
-        ("ℹ️", "About",       "Methodology, data sources & tech stack",            "pages/6_Info.py"),
+        ("ℹ️", "About",       "Methodology, data sources & tech stack",            "pages/7_Info.py"),
     ]
     for col, (icon, title, desc, path) in zip(tc2, tiles2):
         with col:
@@ -453,7 +526,7 @@ def home_page() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Navigation (7 pages: Home + 6)
+# Navigation (8 pages: Home + 7)
 # ---------------------------------------------------------------------------
 pg = st.navigation(
     {
@@ -464,7 +537,8 @@ pg = st.navigation(
             st.Page("pages/3_Matchup_Analysis.py", title="Matchup Analysis", icon="🆚"),
             st.Page("pages/4_Models.py",           title="Models",           icon="🤖"),
             st.Page("pages/5_Performance.py",      title="Performance",      icon="📈"),
-            st.Page("pages/6_Info.py",             title="About",            icon="ℹ️"),
+            st.Page("pages/6_Pick_6.py",           title="Pick 6",           icon="🎯"),
+            st.Page("pages/7_Info.py",             title="About",            icon="ℹ️"),
         ],
     }
 )

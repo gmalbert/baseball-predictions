@@ -8,22 +8,22 @@ A baseball betting site that ingests 5+ years of MLB data, runs multiple predict
 ## Phase 1 – Data Foundation (Weeks 1-3)
 | Task | Doc | Status |
 |------|-----|--------|
-| Identify & evaluate data sources | [01-data-sources.md](01-data-sources.md) | ⬜ |
-| Build ingestion pipelines (historical + daily) | [02-data-ingestion.md](02-data-ingestion.md) | ⬜ |
-| Design & provision database schema | [03-database-schema.md](03-database-schema.md) | ⬜ |
+| Identify & evaluate data sources | [01-data-sources.md](01-data-sources.md) | ✅ |
+| Build ingestion pipelines (historical + daily) | [02-data-ingestion.md](02-data-ingestion.md) | ✅ |
+| Design & provision database schema | [03-database-schema.md](03-database-schema.md) | ✅ |
 
 ## Phase 2 – Modeling & Evaluation (Weeks 4-7)
 | Task | Doc | Status |
 |------|-----|--------|
-| Build underdog, spread & O/U models | [04-betting-models.md](04-betting-models.md) | ⬜ |
-| Create evaluation & back-testing harness | [05-model-evaluation.md](05-model-evaluation.md) | ⬜ |
-| Daily picks engine (scheduler + output) | [06-daily-picks-engine.md](06-daily-picks-engine.md) | ⬜ |
+| Build underdog, spread & O/U models | [04-betting-models.md](04-betting-models.md) | ✅ |
+| Create evaluation & back-testing harness | [05-model-evaluation.md](05-model-evaluation.md) | ✅ |
+| Daily picks engine (scheduler + output) | [06-daily-picks-engine.md](06-daily-picks-engine.md) | ✅ |
 
 ## Phase 3 – Application Layer (Weeks 8-11)
 | Task | Doc | Status |
 |------|-----|--------|
 | Data access layer (FastAPI optional) | [07-backend-api.md](07-backend-api.md) | ⬜ |
-| Streamlit dashboard & UX | [08-frontend-layout.md](08-frontend-layout.md) | ⬜ |
+| Streamlit dashboard & UX | [08-frontend-layout.md](08-frontend-layout.md) | ✅ |
 
 ## Phase 4 – Launch & Operations (Weeks 12+)
 | Task | Doc | Status |
@@ -36,14 +36,14 @@ A baseball betting site that ingests 5+ years of MLB data, runs multiple predict
 ## Things You May Not Have Considered
 
 ### Data & Modeling
-- **Weather data** – Wind speed/direction at each park significantly affects totals. Several APIs (OpenWeatherMap, Visual Crossing) provide historical & forecast data.
-- **Umpire tendencies** – Home-plate umpire strike zones affect run totals. Retrosheet and Baseball Savant track umpire data.
-- **Lineup availability timing** – Lineups are confirmed ~2-3 hours before first pitch. Picks generated before lineups drop carry higher uncertainty.
-- **Injury reports / IL tracking** – Pitcher scratches flip games dramatically. Integrate an injury feed.
-- **Ballpark factors** – Coors Field vs. Oracle Park yields wildly different totals. Fangraphs publishes annual park factors.
-- **Platoon splits** – A left-heavy lineup vs. a lefty starter deserves completely different projections.
-- **Bullpen usage / fatigue** – Back-to-back heavy bullpen usage lowers reliever effectiveness. Model rest days.
-- **Travel & scheduling** – West-coast-to-east-coast travel, day games after night games, and long road trips cause fatigue.
+- ✅ **Weather data** – Wind speed/direction at each park significantly affects totals. Several APIs (OpenWeatherMap, Visual Crossing) provide historical & forecast data.
+- ✅ **Umpire tendencies** – Home-plate umpire strike zones affect run totals. Retrosheet and Baseball Savant track umpire data.
+- ✅ **Lineup availability timing** – Lineups are confirmed ~2-3 hours before first pitch. Picks generated before lineups drop carry higher uncertainty.
+- ✅ **Injury reports / IL tracking** – Pitcher scratches flip games dramatically. Integrate an injury feed.
+- ✅ **Ballpark factors** – Coors Field vs. Oracle Park yields wildly different totals. Fangraphs publishes annual park factors.
+- ✅ **Platoon splits** – A left-heavy lineup vs. a lefty starter deserves completely different projections.
+- ✅ **Bullpen usage / fatigue** – Back-to-back heavy bullpen usage lowers reliever effectiveness. Model rest days.
+- ✅ **Travel & scheduling** – West-coast-to-east-coast travel, day games after night games, and long road trips cause fatigue.
 
 ### Product & UX
 - **Mobile-first design** – Most bettors check picks on their phone.
