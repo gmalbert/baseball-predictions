@@ -22,6 +22,7 @@ def build_gameinfo() -> None:
         "daynight", "usedh", "innings", "timeofgame", "attendance",
         "fieldcond", "precip", "sky", "temp", "winddir", "windspeed",
         "vruns", "hruns", "wteam", "lteam", "gametype", "season",
+        "umphome",
     ]
     available = set(pd.read_csv(RAW_DIR / "gameinfo.csv", nrows=0).columns)
     cols = [c for c in cols if c in available]
@@ -40,7 +41,7 @@ def build_teamstats() -> None:
         "b_sb", "b_cs", "b_gdp",
         "p_ipouts", "p_bfp", "p_h", "p_hr", "p_r", "p_er",
         "p_w", "p_iw", "p_k", "p_hbp", "p_wp", "p_bk",
-        "d_po", "d_a", "d_e", "d_dp",
+        "d_po", "d_a", "d_e", "d_dp", "lob",
         "date", "vishome", "opp", "win", "loss", "tie", "gametype",
     ]
     available = set(pd.read_csv(RAW_DIR / "teamstats.csv", nrows=0).columns)

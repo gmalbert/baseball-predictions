@@ -82,18 +82,23 @@ def _load_teamstats(min_year: int, max_year: int) -> pd.DataFrame:
 
 
 def _load_teamstats_csv(min_year: int, max_year: int) -> pd.DataFrame:
-    """Load teamstats CSV for columns absent from the parquet (e.g. lob)."""
+    """Load teamstats for extra columns (lob etc.); reads parquet if CSV unavailable."""
     wanted = {
         "gid", "team", "stattype", "date", "vishome", "opp", "win", "loss",
         "lob", "d_po", "d_a", "d_e", "d_dp",
         "b_pa", "b_k", "b_w", "b_sb", "b_cs",
     }
-    ts = pd.read_csv(
-        _RETRO / "teamstats.csv",
-        usecols=lambda c: c in wanted,
-        dtype=str,
-        low_memory=False,
-    )
+    path_csv = _RETRO / "teamstats.csv"
+    if path_csv.exists():
+        ts = pd.read_csv(
+            path_csv,
+            usecols=lambda c: c in wanted,
+            dtype=str,
+            low_memory=False,
+        )
+    else:
+        ts = pd.read_parquet(_RETRO / "teamstats.parquet")
+        ts = ts[[c for c in ts.columns if c in wanted]]
     ts = ts[ts["stattype"] == "value"].copy()
     for col in ts.columns:
         if col not in ("gid", "team", "stattype", "date", "vishome", "opp"):
@@ -106,16 +111,21 @@ def _load_teamstats_csv(min_year: int, max_year: int) -> pd.DataFrame:
 
 def _load_gameinfo_csv(min_year: int, max_year: int,
                        extra_cols: Optional[list[str]] = None) -> pd.DataFrame:
-    """Load gameinfo CSV (has columns absent from the parquet, e.g. umphome, site)."""
+    """Load gameinfo; reads parquet if CSV unavailable (CSV is gitignored, parquet is not)."""
     base_cols = ["gid", "visteam", "hometeam", "date", "number",
                  "daynight", "vruns", "hruns", "wteam", "season"]
     wanted = set(base_cols + (extra_cols or []))
-    gi = pd.read_csv(
-        _RETRO / "gameinfo.csv",
-        usecols=lambda c: c in wanted,
-        dtype=str,
-        low_memory=False,
-    )
+    path_csv = _RETRO / "gameinfo.csv"
+    if path_csv.exists():
+        gi = pd.read_csv(
+            path_csv,
+            usecols=lambda c: c in wanted,
+            dtype=str,
+            low_memory=False,
+        )
+    else:
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        gi = gi[[c for c in gi.columns if c in wanted]]
     gi["season"] = pd.to_numeric(gi["season"], errors="coerce")
     gi["date"]   = pd.to_datetime(gi["date"].astype(str), format="%Y%m%d", errors="coerce")
     gi["number"] = pd.to_numeric(gi["number"], errors="coerce").fillna(0).astype(int)
@@ -239,15 +249,19 @@ def weather_interaction_features(min_year: int, max_year: int) -> pd.DataFrame:
     Returns: gid, wind_out, wind_in, dome_flag, temp_cold, temp_hot,
              overcast_flag
     """
-    gi = pd.read_csv(
-        _RETRO / "gameinfo.csv",
-        usecols=lambda c: c in {
-            "gid", "site", "fieldcond", "winddir", "windspeed",
-            "precip", "sky", "temp", "season",
-        },
-        dtype=str,
-        low_memory=False,
-    )
+    _weather_cols = {"gid", "site", "fieldcond", "winddir", "windspeed",
+                     "precip", "sky", "temp", "season"}
+    path_csv = _RETRO / "gameinfo.csv"
+    if path_csv.exists():
+        gi = pd.read_csv(
+            path_csv,
+            usecols=lambda c: c in _weather_cols,
+            dtype=str,
+            low_memory=False,
+        )
+    else:
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        gi = gi[[c for c in gi.columns if c in _weather_cols]]
     gi["season"] = pd.to_numeric(gi["season"], errors="coerce")
     gi = gi[(gi["season"] >= min_year) & (gi["season"] <= max_year)].copy()
 
@@ -291,12 +305,21 @@ def umpire_features(min_year: int, max_year: int) -> pd.DataFrame:
     Returns: gid, ump_runs_avg, ump_above_avg_flag
     """
     warmup_year = max(min_year - 3, 2015)
-    gi = pd.read_csv(
-        _RETRO / "gameinfo.csv",
-        usecols=lambda c: c in {"gid", "date", "umphome", "vruns", "hruns", "season"},
-        dtype=str,
-        low_memory=False,
-    )
+    _ump_cols = {"gid", "date", "umphome", "vruns", "hruns", "season"}
+    path_csv = _RETRO / "gameinfo.csv"
+    if path_csv.exists():
+        gi = pd.read_csv(
+            path_csv,
+            usecols=lambda c: c in _ump_cols,
+            dtype=str,
+            low_memory=False,
+        )
+    else:
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        gi = gi[[c for c in gi.columns if c in _ump_cols]]
+    if "umphome" not in gi.columns:
+        # umphome absent from parquet until build_parquet_data.py is re-run locally
+        return pd.DataFrame(columns=["gid", "ump_runs_avg", "ump_above_avg_flag"])
     gi["season"]     = pd.to_numeric(gi["season"], errors="coerce")
     gi               = gi[gi["season"] >= warmup_year].copy()
     gi["date"]       = pd.to_datetime(gi["date"].astype(str), format="%Y%m%d", errors="coerce")
