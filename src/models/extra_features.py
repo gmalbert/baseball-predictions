@@ -523,34 +523,16 @@ def bullpen_fatigue_features(min_year: int, max_year: int) -> pd.DataFrame:
         df["pen_arms_3d"]    = df["relief_arms"].rolling("3D", closed="left").sum().fillna(0)
         return df.reset_index()
 
-    # pandas ≥2.2 deprecates operating on groupby keys inside apply;
-    # use include_groups=False and re-attach the key columns via a merge.
-    apply_kwargs: dict = {}
-    try:
-        import inspect
-        if "include_groups" in inspect.signature(
-            game_rel.groupby(["team", "vishome"]).apply
-        ).parameters:
-            apply_kwargs["include_groups"] = False
-    except Exception:
-        pass
-
-    rolled = (
-        game_rel
-        .groupby(["team", "vishome"], group_keys=False)
-        .apply(_rolling_3d, **apply_kwargs)
-    )
-
-    # If include_groups=False dropped the key columns, restore vishome from the
-    # original game_rel (which still has it) via a gid+team merge.
-    if "vishome" not in rolled.columns:
-        rolled = rolled.merge(
-            game_rel[["gid", "team", "vishome"]].drop_duplicates(),
-            on=["gid", "team"],
-            how="left",
-        )
-
-    game_rel = rolled
+    # Avoid groupby.apply() entirely — pandas 3.x drops groupby key columns,
+    # and the include_groups workaround still drops both 'team' and 'vishome'.
+    # A simple loop + concat is version-safe and equally fast for this table size.
+    parts: list[pd.DataFrame] = []
+    for (team, vh), grp in game_rel.groupby(["team", "vishome"]):
+        result = _rolling_3d(grp.copy())
+        result["team"] = team
+        result["vishome"] = vh
+        parts.append(result)
+    game_rel = pd.concat(parts, ignore_index=True)
 
     home = (
         game_rel[game_rel["vishome"] == "h"][["gid", "bullpen_ip_3d", "pen_arms_3d"]]
