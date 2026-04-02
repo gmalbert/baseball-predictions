@@ -12,6 +12,7 @@ New features implemented here (keyed to docs/11-feature-engineering-roadmap.md):
     5.2  LOB & Scoring Efficiency
     6.2  Weather Interaction Features
     6.3  Umpire Home-Plate Tendency
+    6.3b Umpire Base Position Tendencies
     7.1  Pythagorean Win% Differential
     7.2  Base-Running Efficiency
     7.3  Bullpen Workload & Fatigue
@@ -319,7 +320,10 @@ def umpire_features(min_year: int, max_year: int) -> pd.DataFrame:
         gi = gi[[c for c in gi.columns if c in _ump_cols]]
     if "umphome" not in gi.columns:
         # umphome absent from parquet until build_parquet_data.py is re-run locally
-        return pd.DataFrame(columns=["gid", "ump_runs_avg", "ump_above_avg_flag"])
+        return pd.DataFrame(columns=[
+            "gid", "ump_runs_avg", "ump_above_avg_flag",
+            "ump_home_games", "ump_home_over_mean", "ump_home_trend",
+        ])
     gi["season"]     = pd.to_numeric(gi["season"], errors="coerce")
     gi               = gi[gi["season"] >= warmup_year].copy()
     gi["date"]       = pd.to_datetime(gi["date"].astype(str), format="%Y%m%d", errors="coerce")
@@ -330,7 +334,7 @@ def umpire_features(min_year: int, max_year: int) -> pd.DataFrame:
 
     league_mean = gi["total_runs"].mean()
 
-    # Expanding lagged mean per umpire
+    # Expanding lagged mean per umpire (no lookahead)
     gi["ump_runs_avg"] = (
         gi.groupby("umphome")["total_runs"]
         .expanding()
@@ -342,8 +346,103 @@ def umpire_features(min_year: int, max_year: int) -> pd.DataFrame:
     )
     gi["ump_above_avg_flag"] = (gi["ump_runs_avg"] > league_mean).astype(float)
 
+    # Games umpired before this game (sample-size signal)
+    gi["ump_home_games"] = (
+        gi.groupby("umphome")["total_runs"]
+        .expanding()
+        .count()
+        .reset_index(level=0, drop=True)
+        .shift(1)
+        .fillna(0)
+        .astype(int)
+    )
+
+    # Delta vs league average (positive = over-average run environment)
+    gi["ump_home_over_mean"] = (gi["ump_runs_avg"] - league_mean).round(2)
+
+    # Trend: rolling-30 lagged mean minus prior rolling-30 (shifted 30 more)
+    _roll30 = (
+        gi.groupby("umphome")["total_runs"]
+        .transform(lambda x: x.rolling(30, min_periods=10).mean().shift(1))
+    )
+    _roll30_prior = (
+        gi.groupby("umphome")["total_runs"]
+        .transform(lambda x: x.rolling(30, min_periods=10).mean().shift(31))
+    )
+    gi["ump_home_trend"] = (_roll30 - _roll30_prior).round(2).fillna(0.0)
+
     return (
-        gi[gi["season"] >= min_year][["gid", "ump_runs_avg", "ump_above_avg_flag"]]
+        gi[gi["season"] >= min_year][[
+            "gid", "ump_runs_avg", "ump_above_avg_flag",
+            "ump_home_games", "ump_home_over_mean", "ump_home_trend",
+        ]]
+        .drop_duplicates("gid")
+        .reset_index(drop=True)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6.3b — Umpire Base Position Tendencies
+# ---------------------------------------------------------------------------
+
+def umpire_position_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Expanding-window historical runs/game for each base umpire position (1B/2B/3B).
+
+    Requires ump1b/ump2b/ump3b columns in gameinfo (added in build_parquet_data.py).
+    Gracefully returns league-mean fill if the columns are absent.
+    Avoids lookahead: each game uses only prior history for that umpire.
+
+    Returns: gid, ump1b_runs_avg, ump2b_runs_avg, ump3b_runs_avg
+    """
+    warmup_year = max(min_year - 3, 2015)
+    _cols = {"gid", "date", "ump1b", "ump2b", "ump3b", "vruns", "hruns", "season"}
+    path_csv = _RETRO / "gameinfo.csv"
+    if path_csv.exists():
+        gi = pd.read_csv(
+            path_csv,
+            usecols=lambda c: c in _cols,
+            dtype=str,
+            low_memory=False,
+        )
+    else:
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        gi = gi[[c for c in gi.columns if c in _cols]]
+
+    pos_cols = [c for c in ("ump1b", "ump2b", "ump3b") if c in gi.columns]
+    _out_cols = ["gid", "ump1b_runs_avg", "ump2b_runs_avg", "ump3b_runs_avg"]
+    if not pos_cols:
+        return pd.DataFrame(columns=_out_cols)
+
+    gi["season"]     = pd.to_numeric(gi["season"], errors="coerce")
+    gi               = gi[gi["season"] >= warmup_year].copy()
+    gi["date"]       = pd.to_datetime(gi["date"].astype(str), format="%Y%m%d", errors="coerce")
+    gi["vruns"]      = pd.to_numeric(gi["vruns"], errors="coerce")
+    gi["hruns"]      = pd.to_numeric(gi["hruns"], errors="coerce")
+    gi["total_runs"] = gi["vruns"] + gi["hruns"]
+    gi               = gi.sort_values("date").reset_index(drop=True)
+
+    league_mean = gi["total_runs"].mean()
+    result = gi[["gid", "season"]].copy()
+
+    for pos in pos_cols:
+        result[f"{pos}_runs_avg"] = (
+            gi.groupby(pos)["total_runs"]
+            .expanding()
+            .mean()
+            .reset_index(level=0, drop=True)
+            .shift(1)
+            .fillna(league_mean)
+            .round(2)
+        )
+
+    # Ensure all three output columns exist even if source data is partial
+    for pos in ("ump1b", "ump2b", "ump3b"):
+        col = f"{pos}_runs_avg"
+        if col not in result.columns:
+            result[col] = float(league_mean)
+
+    return (
+        result[result["season"] >= min_year][_out_cols]
         .drop_duplicates("gid")
         .reset_index(drop=True)
     )
@@ -424,11 +523,34 @@ def bullpen_fatigue_features(min_year: int, max_year: int) -> pd.DataFrame:
         df["pen_arms_3d"]    = df["relief_arms"].rolling("3D", closed="left").sum().fillna(0)
         return df.reset_index()
 
-    game_rel = (
+    # pandas ≥2.2 deprecates operating on groupby keys inside apply;
+    # use include_groups=False and re-attach the key columns via a merge.
+    apply_kwargs: dict = {}
+    try:
+        import inspect
+        if "include_groups" in inspect.signature(
+            game_rel.groupby(["team", "vishome"]).apply
+        ).parameters:
+            apply_kwargs["include_groups"] = False
+    except Exception:
+        pass
+
+    rolled = (
         game_rel
         .groupby(["team", "vishome"], group_keys=False)
-        .apply(_rolling_3d)
+        .apply(_rolling_3d, **apply_kwargs)
     )
+
+    # If include_groups=False dropped the key columns, restore vishome from the
+    # original game_rel (which still has it) via a gid+team merge.
+    if "vishome" not in rolled.columns:
+        rolled = rolled.merge(
+            game_rel[["gid", "team", "vishome"]].drop_duplicates(),
+            on=["gid", "team"],
+            how="left",
+        )
+
+    game_rel = rolled
 
     home = (
         game_rel[game_rel["vishome"] == "h"][["gid", "bullpen_ip_3d", "pen_arms_3d"]]
@@ -634,6 +756,7 @@ if __name__ == "__main__":
         ("lob",              lambda: lob_features(2024, 2025)),
         ("weather",          lambda: weather_interaction_features(2024, 2025)),
         ("umpire",           lambda: umpire_features(2024, 2025)),
+        ("ump_positions",    lambda: umpire_position_features(2024, 2025)),
         ("pyth_diff",        lambda: pythagorean_diff_features(2024, 2025)),
         ("baserunning",      lambda: baserunning_features(2024, 2025)),
         ("bullpen_fatigue",  lambda: bullpen_fatigue_features(2024, 2025)),

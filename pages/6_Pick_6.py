@@ -144,15 +144,32 @@ def _pitching_leaders_cached(min_year: int = 2020, max_year: int = _CUR_YEAR) ->
 
 
 def _get_player_game_log(player_id: str, prop: str, season: int) -> pd.DataFrame:
-    """Return a per-game DataFrame for the given player + prop column."""
-    if prop in _PROP_BAT_COL:
-        df = _batter_game_logs(season, season)
-        stat_col = _PROP_BAT_COL[prop]
-    else:
-        df = _pitcher_game_logs(season, season)
-        stat_col = _PROP_PITCH_COL[prop]
+    """Return a per-game DataFrame for the given player + prop column.
 
-    player_df = df[df["id"] == player_id].copy()
+    If ``season`` has no rows for this player (e.g. current year not yet in
+    the data store), automatically falls back to the most-recent prior season
+    that does have data.
+    """
+    is_batter = prop in _PROP_BAT_COL
+
+    def _load(yr: int) -> pd.DataFrame:
+        if is_batter:
+            df = _batter_game_logs(yr, yr)
+            stat_col = _PROP_BAT_COL[prop]
+        else:
+            df = _pitcher_game_logs(yr, yr)
+            stat_col = _PROP_PITCH_COL[prop]
+        pf = df[df["id"] == player_id].copy()
+        return pf, stat_col
+
+    player_df, stat_col = _load(season)
+
+    # Fallback: walk back up to 3 prior seasons when the requested year has no data
+    for fallback_yr in range(season - 1, max(season - 4, 2019), -1):
+        if not player_df.empty:
+            break
+        player_df, stat_col = _load(fallback_yr)
+
     if player_df.empty:
         return pd.DataFrame()
 
@@ -212,17 +229,362 @@ def _analyse_player(game_log: pd.DataFrame, dk_line: float):
     }
 
 
+# ─── OCR / Screenshot helpers ────────────────────────────────────────────────
+
+# DraftKings display name → internal prop name
+_DK_PROP_MAP: dict[str, str] = {
+    # Full canonical labels
+    "strikeouts thrown":        "Strikeouts",
+    "strikeouts":               "Strikeouts",
+    # OCR mis-reads of "Strikeouts Thrown" — tesseract often drops 'St' or garbles entirely
+    "irkeouts thrown":          "Strikeouts",
+    "rkeouts thrown":           "Strikeouts",
+    "trikeouts thrown":         "Strikeouts",
+    "irkeouts":                 "Strikeouts",
+    "rkeouts":                  "Strikeouts",
+    "trikeouts":                "Strikeouts",
+    "serkeoute twrown":         "Strikeouts",
+    "serkeoute":                "Strikeouts",
+    "strkeoute throw":          "Strikeouts",
+    "strkeoute":                "Strikeouts",
+    "erkeoute":                 "Strikeouts",
+    "trrown":                   "Strikeouts",
+    # Hits+Runs+RBI variants including OCR garble
+    "rune + r":                 "Hits+Runs+RBI",
+    # Hits + Runs + RBIs variants
+    "hits + runs + rbis":       "Hits+Runs+RBI",
+    "hits+runs+rbis":           "Hits+Runs+RBI",
+    "hits + runs + rbi":        "Hits+Runs+RBI",
+    "hits + runs":              "Hits+Runs+RBI",
+    "runs + rbis":              "Hits+Runs+RBI",
+    "runs + rbi":               "Hits+Runs+RBI",
+    # Home runs
+    "home runs":                "Home Runs",
+    "home run":                 "Home Runs",
+    # Total bases
+    "total bases (from hits)":  "Total Bases",
+    "total bases from hits":    "Total Bases",
+    "total bases":              "Total Bases",
+    "tal bases (from hits)":    "Total Bases",   # OCR drops 'To'
+    "tal bases (from hs)":      "Total Bases",   # OCR drops 'To' + truncates 'hits'
+    "tal bases":                "Total Bases",   # OCR drops 'To'
+    # Hits / RBI / Runs
+    "hits":                     "Hits",
+    "rbis":                     "RBI",
+    "rbi":                      "RBI",
+    "runs scored":              "Runs",
+    "runs":                     "Runs",
+}
+
+
+def _ocr_available() -> bool:
+    """Return True only when both pytesseract and the Tesseract binary are present."""
+    try:
+        import shutil
+        import pytesseract
+
+        # Explicitly set the binary path so Streamlit (which may inherit a
+        # different PATH from its launcher) can always find the executable.
+        _exe = shutil.which("tesseract") or r"C:\Program Files\Tesseract-OCR\tesseract.EXE"
+        pytesseract.pytesseract.tesseract_cmd = _exe
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
+@st.cache_data(show_spinner=False)
+def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
+    """
+    Run Tesseract OCR on a DraftKings Pick 6 screenshot and extract player props.
+
+    Strategy
+    --------
+    DK cards sit in a 3-column grid.  We split the image into thirds horizontally,
+    OCR each column separately (better line ordering per card), then merge results.
+
+    Returns
+    -------
+    (picks, raw_ocr_text)
+    Each pick dict has keys: display_name, first_initial, last_name, line, prop
+    """
+    import re
+    import io
+    import shutil
+
+    try:
+        import pytesseract
+        from PIL import Image, ImageEnhance
+        # Ensure the binary path is explicit for the Streamlit process
+        _exe = shutil.which("tesseract") or r"C:\Program Files\Tesseract-OCR\tesseract.EXE"
+        pytesseract.pytesseract.tesseract_cmd = _exe
+    except ImportError:
+        return [], "pytesseract / Pillow not installed."
+
+    img = Image.open(io.BytesIO(image_bytes))
+    W, H = img.size
+
+    # DK cards sit in a 3-column grid — OCR each column independently for correct line order.
+    columns = [
+        img.crop((0,        0, W // 3,      H)),
+        img.crop((W // 3,   0, 2 * W // 3,  H)),
+        img.crop((2 * W//3, 0, W,            H)),
+    ]
+
+    def _ocr_col(col_img: "Image.Image") -> str:
+        grey = col_img.convert("L")
+        grey = ImageEnhance.Contrast(grey).enhance(2.5)
+        # PSM 6 = single uniform block; more reliable than PSM 4 for card grids
+        return pytesseract.image_to_string(grey, config="--psm 6 --oem 1")
+
+    raw_parts = [_ocr_col(c) for c in columns]
+    raw_text  = "\n---col---\n".join(raw_parts)
+
+    # ── Name pattern ────────────────────────────────────────────────────────
+    # Tolerant: accept any leading junk (team-logo OCR artifacts) before "X. LastName"
+    # Position (SP/OF/etc.) is optional — some DK layouts omit it.
+    _POSITIONS = r"(?:SP|RP|OF|1B|2B|3B|SS|C|DH|P|CF|LF|RF)"
+    name_pat = re.compile(
+        r'([A-Z])\.\s{0,3}([A-Z][A-Za-z\u00C0-\u017E]{1,20}(?:[\s\-][A-Z][A-Za-z]{1,15})?)'
+        r'(?:\s+' + _POSITIONS + r')?',
+    )
+
+    # ── Line number pattern ─────────────────────────────────────────────────
+    # OCR lines often look like "0.5 +", "= 7.5 +", "+ 8 5.5 +".
+    _line_search = re.compile(r'\b(\d{1,2}\.\d|\d{1,2})\b')
+    _time_pat    = re.compile(r'\b\d{1,2}:\d{2}\b')  # strip "52:21", "12:21" before matching
+
+    # Words that indicate a game-context line (NOT a prop line number)
+    _SKIP_WORDS = frozenset({"pm", "am", "today", "bot", "top", "current", "curent",
+                              "starts", "start", "inning", "more", "less", "locked"})
+
+    def _extract_line(seg: str) -> float | None:
+        # Skip game-matchup lines — they always contain "@" (e.g. "NYY @ SEA", "0@ HOU")
+        # and prop lines never do.
+        if "@" in seg:
+            return None
+        # Skip other game-context rows (scores, status, timestamps)
+        seg_lower = seg.lower()
+        if any(w in seg_lower for w in _SKIP_WORDS):
+            return None
+        # Strip clock-time patterns (e.g. "12:21") before number extraction so
+        # countdown timers don't get confused for prop lines.
+        seg = _time_pat.sub('', seg)
+        nums = [float(m) for m in _line_search.findall(seg) if 0.5 <= float(m) <= 20.0]
+        if not nums:
+            return None
+        # Prefer fractional values (x.5) — typical DK Pick 6 lines
+        frac = [v for v in nums if v != int(v)]
+        return frac[0] if frac else nums[0]
+
+    # Fallback name pattern: just "LastName POSITION" when initial dot is missing
+    fallback_name_pat = re.compile(
+        r'(?<![A-Za-z])([A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,10})?)'
+        r'\s+(?:SP|RP|OF|1B|2B|3B|SS|C\b|DH|CF|LF|RF)\b'
+    )
+    # Softer fallback: "Freeman 78" — name followed by 2-3 digit number (jersey/ownership %)
+    fallback_num_pat = re.compile(
+        r'(?<![A-Za-z\.])([A-Z][a-z]{3,15})\s+\d{2,3}\b'
+    )
+    # Ampersand-prefix: "& Montgomery" — name after & with no position token
+    ampersand_name_pat = re.compile(
+        r'&\s+([A-Z][a-z]{3,15})\b'
+    )
+    _at_initial  = re.compile(r'@([A-Z])\b')              # "@A" → "A."
+    _hyphen_init = re.compile(r'\b([A-Z])-([A-Z][a-z])')   # "R-Greene" → "R. Greene"
+    _sp_garble   = re.compile(r'\bS\?(?!\w)')              # "S?" → "SP" (OCR noise for SP)
+    _title_la    = re.compile(r'\bLa\s+([a-z]{3,15})\b')  # "La cruz" → "La Cruz"
+    _pos_strip   = re.compile(r'\s+(?:SP|RP|OF|1B|2B|3B|SS|DH|CF|LF|RF|C)$', re.IGNORECASE)
+
+    def _preprocess(line: str) -> str:
+        line = _at_initial.sub(lambda m: m.group(1) + '.', line)
+        line = _hyphen_init.sub(lambda m: m.group(1) + '. ' + m.group(2), line)
+        line = _sp_garble.sub('SP', line)
+        line = _title_la.sub(lambda m: 'La ' + m.group(1).capitalize(), line)
+        return line
+
+    def _find_all_names(line: str) -> list[tuple[str, str]]:
+        """All (initial, last_name) tokens on this line, sorted by character position."""
+        results: list[tuple[str, str, int, int]] = []  # (initial, name, start, end)
+        for nm in name_pat.finditer(line):
+            fi = nm.group(1).upper()
+            ln = _pos_strip.sub('', nm.group(2).strip()).strip()
+            if len(ln) >= 2 and not ln.isupper():
+                results.append((fi, ln, nm.start(), nm.end()))
+        # Always run position fallback; skip spans already covered by name_pat
+        for nm in fallback_name_pat.finditer(line):
+            parts = nm.group(1).strip().split()
+            ln = parts[-1]
+            if len(ln) >= 2:
+                s, e = nm.start(), nm.end()
+                if not any(s < r[3] and e > r[2] for r in results):
+                    results.append(('?', ln, s, e))
+        # Soft fallback: "Freeman 78" — name followed by a 2-3 digit number
+        for nm in fallback_num_pat.finditer(line):
+            ln = nm.group(1).strip()
+            # Reject common non-name words that happen to precede a number
+            if len(ln) >= 4 and ln.lower() not in _SKIP_WORDS:
+                s, e = nm.start(), nm.end()
+                if not any(s < r[3] and e > r[2] for r in results):
+                    results.append(('?', ln, s, e))
+        # Ampersand prefix: "& Montgomery"
+        for nm in ampersand_name_pat.finditer(line):
+            ln = nm.group(1).strip()
+            s, e = nm.start(), nm.end()
+            if not any(s < r[3] and e > r[2] for r in results):
+                results.append(('?', ln, s, e))
+        results.sort(key=lambda r: r[2])
+        return [(r[0], r[1]) for r in results]
+
+    # Sort prop map by key length desc so "hits + runs + rbis" wins over "hits"
+    sorted_props = sorted(_DK_PROP_MAP.items(), key=lambda kv: -len(kv[0]))
+
+    picks: list[dict] = []
+    seen: set[str] = set()  # deduplicate by (name, prop, line)
+
+    for col_text in raw_parts:
+        lines = [_preprocess(ln.strip()) for ln in col_text.split("\n") if ln.strip()]
+        i = 0
+        while i < len(lines):
+            name_hits = _find_all_names(lines[i])
+            if not name_hits:
+                i += 1
+                continue
+
+            for idx, (first_initial, last_name) in enumerate(name_hits):
+                pick: dict = {
+                    "display_name":  f"{first_initial}. {last_name}" if first_initial != "?" else last_name,
+                    "first_initial": first_initial,
+                    "last_name":     last_name,
+                    "line":          None,
+                    "prop":          None,
+                }
+                for j in range(i + 1, min(i + 15, len(lines))):
+                    seg = lines[j]
+                    seg_stripped = seg.strip()
+
+                    if pick["line"] is None:
+                        extracted = _extract_line(seg_stripped)
+                        if extracted is not None:
+                            pick["line"] = extracted
+                            continue
+
+                    if pick["line"] is not None and pick["prop"] is None:
+                        candidates = [seg_stripped.lower()]
+                        if j + 1 < len(lines):
+                            candidates.append((seg_stripped + " " + lines[j + 1].strip()).lower())
+                        for candidate in candidates:
+                            # Collect ALL matching props; Nth name on a merged line → Nth prop
+                            matched: list[str] = []
+                            for dk_name, internal in sorted_props:
+                                if dk_name in candidate and internal not in matched:
+                                    matched.append(internal)
+                            if matched:
+                                pick["prop"] = matched[min(idx, len(matched) - 1)]
+                                break
+
+                    if pick["line"] is not None and pick["prop"] is not None:
+                        key = f"{first_initial}.{last_name}|{pick['prop']}|{pick['line']}"
+                        if key not in seen:
+                            seen.add(key)
+                            picks.append(pick)
+                        break
+            i += 1
+
+    return picks, raw_text
+
+
+# Known OCR corruption aliases: garbled_last_lower → real_last_lower.
+# Add entries here whenever a severely corrupted name is identified.
+_OCR_ALIAS: dict[str, str] = {
+    "onan":   "ohtani",
+    "ohtan":  "ohtani",
+    "ohtam":  "ohtani",
+    "rarper": "harper",
+    "harpe":  "harper",
+    "crusz":  "cruz",
+    "monty":  "montgomery",
+}
+
+
+def _match_player(pick: dict, registry: pd.DataFrame, season: int) -> tuple[str | None, str | None]:
+    """
+    Match a DK OCR-extracted name → (player_id, full_name).
+
+    Strategy (in order):
+      1. Apply known OCR alias table (e.g. "onan" → "ohtani")
+      2. Exact word-boundary search on last name
+      3. difflib fuzzy search on unique last names (threshold 0.62)
+    For each candidate set, narrows by first initial when available.
+    """
+    import re
+    from difflib import SequenceMatcher
+
+    raw_last = pick["last_name"].lower()
+    last     = _OCR_ALIAS.get(raw_last, raw_last)   # step 1: alias table
+    initial  = pick["first_initial"].upper()
+
+    # Prefer current-season rows; fall back to all seasons
+    season_reg = registry[registry["season"] == season]
+    if season_reg.empty:
+        season_reg = registry
+
+    def _narrow_by_initial(df: pd.DataFrame) -> pd.DataFrame:
+        if initial and initial != "?":
+            narrowed = df[df["full_name"].str.upper().str.startswith(initial, na=False)]
+            return narrowed if not narrowed.empty else df
+        return df
+
+    def _best(df: pd.DataFrame):
+        df = _narrow_by_initial(df)
+        row = df.sort_values("season", ascending=False).iloc[0]
+        return str(row["id"]), str(row["full_name"])
+
+    # Step 2: exact word-boundary match
+    pattern = r'\b' + re.escape(last) + r'\b'
+    exact = season_reg[
+        season_reg["full_name"].str.lower().str.contains(pattern, regex=True, na=False)
+    ]
+    if not exact.empty:
+        return _best(exact)
+
+    # Step 3: fuzzy match on distinct last names in the registry
+    last_names = season_reg["full_name"].str.lower().str.split().str[-1].dropna().unique()
+    scored = [
+        (SequenceMatcher(None, last, ln).ratio(), ln)
+        for ln in last_names
+    ]
+    scored.sort(reverse=True)
+    if scored and scored[0][0] >= 0.72:
+        best_ln = scored[0][1]
+        # When no first initial is available, require the OCR name's first letter
+        # matches the fuzzy-matched last name's first letter to avoid e.g.
+        # "Kevan" (OCR of "Kwan") matching "Evans" instead.
+        if initial == '?' and last and best_ln and last[0] != best_ln[0]:
+            return None, None
+        fuzzy_pat = r'\b' + re.escape(best_ln) + r'\b'
+        fuzzy = season_reg[
+            season_reg["full_name"].str.lower().str.contains(fuzzy_pat, regex=True, na=False)
+        ]
+        if not fuzzy.empty:
+            return _best(fuzzy)
+
+    return None, None
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
+
 
 def main():
     st.title("🎯 DraftKings Pick 6 – MLB")
-    st.markdown("Analyse player props vs. DraftKings Pick 6 lines using historical game logs.")
+    st.markdown("Analyze player props vs. DraftKings Pick 6 lines using historical game logs.")
     st.markdown("---")
 
-    tab_calc, tab_top, tab_leaders = st.tabs([
+    tab_calc, tab_top, tab_leaders, tab_shot = st.tabs([
         "📊 DK Pick 6 Calculator",
         "⭐ Top Picks",
         "🏆 Season Leaders",
+        "📷 Screenshot Import",
     ])
 
     # ─── preload shared data ──────────────────────────────────────────────────
@@ -397,7 +759,7 @@ def main():
                 fig.add_hline(y=dk_line, line_dash="dash", line_color="#f59e0b",
                               annotation_text=f"DK Line {dk_line:.1f}", annotation_position="top right")
                 fig.update_layout(showlegend=True, legend_title_text="vs Line")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
                 with st.expander("ℹ️ How This Works"):
                     st.markdown(f"""
@@ -589,7 +951,197 @@ The actual DraftKings line may differ — always check before betting.
                 st.dataframe(disp, width='stretch', hide_index=True, height=_df_height(disp))
                 st.caption(f"Top {len(d)} by Strikeouts — {l_season}")
 
+    # =========================================================================
+    # TAB 4 — Screenshot Import
+    # =========================================================================
+    with tab_shot:
+        st.subheader("📷 Screenshot Import — DraftKings Pick 6")
+        st.markdown(
+            "Upload a DraftKings Pick 6 screenshot and get instant MORE / LESS recommendations "
+            "based on historical game-log statistics."
+        )
+
+        ocr_ok   = _ocr_available()
+        season_s = st.selectbox(
+            "Season",
+            sorted(_SEASONS, reverse=True),
+            key="shot_season",
+            # Default to most recent complete season (prior year) since current
+            # season data is unavailable until mid-April at the earliest.
+            index=1 if _CUR_YEAR in _SEASONS and len(_SEASONS) > 1 else 0,
+        )
+
+        if not ocr_ok:
+            st.warning(
+                "⚠️ **Tesseract OCR is not installed** — automatic parsing is unavailable.  \n"
+                "Install it:  \n"
+                "- **Windows:** [Tesseract installer](https://github.com/UB-Mannheim/tesseract/wiki) "
+                "then add to PATH  \n"
+                "- **macOS:** `brew install tesseract`  \n"
+                "- **Linux / Streamlit Cloud:** `apt-get install tesseract-ocr` (handled via `packages.txt`)"
+            )
+            st.markdown("---")
+            st.markdown("### ✍️ Manual Entry")
+            st.markdown("Enter each prop you see on the DraftKings card:")
+
+            with st.form("manual_entry_form"):
+                n_rows = st.number_input("Number of picks", 1, 12, 6)
+                manual_picks: list[dict] = []
+                for idx in range(int(n_rows)):
+                    c1, c2, c3 = st.columns([3, 2, 1])
+                    pname = c1.text_input(f"Player #{idx+1} name",    key=f"mp_name_{idx}")
+                    pprop = c2.selectbox(f"Prop #{idx+1}",             ALL_PROPS, key=f"mp_prop_{idx}")
+                    pline = c3.number_input(f"Line #{idx+1}", 0.5, 50.0, 0.5, 0.5, key=f"mp_line_{idx}")
+                    if pname:
+                        manual_picks.append({"display_name": pname, "line": pline, "prop": pprop})
+
+                submitted = st.form_submit_button("🔍 Analyse Picks")
+
+            if submitted and manual_picks:
+                _render_pick_results(manual_picks, registry, season_s, from_ocr=False)
+        else:
+            uploaded = st.file_uploader(
+                "Upload DraftKings Pick 6 screenshot",
+                type=["png", "jpg", "jpeg"],
+                key="shot_upload",
+                help="Drag-and-drop or click to browse. PNG / JPG accepted.",
+            )
+
+            if uploaded:
+                img_bytes = uploaded.read()
+                st.image(img_bytes, caption="Uploaded screenshot", width='stretch')
+
+                with st.spinner("Running OCR — parsing player cards…"):
+                    parsed_picks, raw_ocr = _parse_dk_screenshot(img_bytes)
+
+                # Always show raw OCR so we can iterate on the regex without guessing
+                with st.expander("🔍 Raw OCR output (debug)", expanded=not parsed_picks):
+                    st.code(raw_ocr, language="")
+                    if parsed_picks:
+                        st.write("**Parsed picks:**", parsed_picks)
+                    # Show a sample of registry names to confirm player data is loaded
+                    st.write(f"**Registry rows:** {len(registry)}  |  **Sample names:** {registry['full_name'].drop_duplicates().head(10).tolist()}")
+
+                if not parsed_picks:
+                    st.error(
+                        "Could not extract any player props from this screenshot.  \n"
+                        "Tips: use a full-resolution screenshot with all card text visible."
+                    )
+                else:
+                    st.success(f"Detected **{len(parsed_picks)} props** — analysing…")
+                    _render_pick_results(parsed_picks, registry, season_s, from_ocr=True)
+
     add_betting_oracle_footer()
+
+
+def _render_pick_results(
+    picks: list[dict],
+    registry: pd.DataFrame,
+    season: int,
+    from_ocr: bool,
+) -> None:
+    """
+    Shared renderer: match players, run analysis, display ranked results.
+    `picks` items must have keys: display_name, prop, line.
+    When from_ocr=True they also have first_initial / last_name.
+    """
+    # Progress UI
+    total = max(len(picks), 1)
+    progress_bar = st.progress(0)
+    progress_text = st.empty()
+
+    rows = []
+    unmatched = []
+
+    for idx, pick in enumerate(picks, start=1):
+        progress_text.markdown(f"## Processing pick {idx}/{total}...")
+        progress_bar.progress(int((idx - 1) / total * 100))
+
+        if from_ocr:
+            pid, fname = _match_player(pick, registry, season)
+        else:
+            # Manual entry: search by full text
+            lower = pick["display_name"].lower()
+            candidates = registry[registry["full_name"].str.lower().str.contains(lower, na=False)]
+            if candidates.empty:
+                pid, fname = None, None
+            else:
+                best = candidates.sort_values("season", ascending=False).iloc[0]
+                pid, fname = str(best["id"]), str(best["full_name"])
+
+        if not pid:
+            raw_last = pick.get("last_name", "").lower()
+            alias = _OCR_ALIAS.get(raw_last)
+            hint = f" (tried alias → {alias})" if alias else " (no fuzzy match found)"
+            unmatched.append(pick["display_name"] + hint)
+            continue
+
+        gl = _get_player_game_log(pid, pick["prop"], season)
+        if gl is None or gl.empty:
+            unmatched.append(f"{pick['display_name']} (no {pick['prop']} data in {season})")
+            continue
+
+        res = _analyse_player(gl, pick["line"])
+        rows.append({
+            "Player":      fname,
+            "OCR Name":    pick["display_name"],
+            "Prop":        pick["prop"],
+            "DK Line":     pick["line"],
+            "Rec":         res["recommendation"],
+            "Confidence":  res["confidence"],
+            "Tier":        res["tier"],
+            "Season Avg":  round(res["season_avg"],  2),
+            "Last 10 Avg": round(res["last_10_avg"], 2),
+            "player_id":   pid,
+        })
+
+    progress_bar.progress(100)
+    progress_text.markdown("## ✅ Processing complete")
+
+    if not rows:
+        st.warning("No players could be matched against the historical database.")
+        return
+
+    rows_sorted = sorted(rows, key=lambda x: x["Confidence"], reverse=True)
+
+    st.markdown("### 🏆 Ranked Recommendations")
+
+    for rank, r in enumerate(rows_sorted, 1):
+        rec_color  = "#16a34a" if r["Rec"] == "MORE" else "#dc2626"
+        tier_emoji = r["Tier"].split()[0]  # e.g. "🔥"
+        with st.container():
+            st.markdown(
+                f"""
+<div style="background:#f8fafc; border-left:4px solid {rec_color};
+            padding:0.75rem 1rem; border-radius:8px; margin-bottom:0.5rem; color:#111827; border:1px solid #cbd5e1;">
+  <span style="font-size:1.05rem; font-weight:700;">#{rank} {r['Player']}</span>
+  {f'<span style="opacity:.5; font-size:.8rem;"> ← {r["OCR Name"]}</span>' if r['OCR Name'].lower() != r['Player'].lower().split()[-1].lstrip() and r['OCR Name'] != r['Player'] else ''}
+  &nbsp;·&nbsp; <span style="opacity:.75;">{r['Prop']}</span>
+  &nbsp;·&nbsp; Line: <strong>{r['DK Line']}</strong>
+  &nbsp;&nbsp;
+  <span style="color:{rec_color}; font-weight:900; font-size:1.1rem;">{r['Rec']}</span>
+  &nbsp; {r['Tier']}
+  &nbsp;&nbsp;
+  <span style="opacity:.6; font-size:.9rem;">
+    Conf: {r['Confidence']:.1%} &nbsp;|&nbsp;
+    Season avg: {r['Season Avg']} &nbsp;|&nbsp;
+    L10 avg: {r['Last 10 Avg']}
+  </span>
+</div>""",
+                unsafe_allow_html=True,
+            )
+
+    # Summary table
+    st.markdown("### 📋 Summary Table")
+    disp_cols = ["Player", "OCR Name", "Prop", "DK Line", "Rec", "Tier", "Confidence", "Season Avg", "Last 10 Avg"]
+    df_res = pd.DataFrame(rows_sorted)[disp_cols].copy()
+    df_res["Confidence"] = df_res["Confidence"].apply(lambda x: f"{x:.1%}")
+    st.dataframe(df_res, hide_index=True, width='stretch', height=get_dataframe_height(df_res))
+
+    if unmatched:
+        with st.expander(f"⚠️ {len(unmatched)} player(s) not matched / no data"):
+            for name in unmatched:
+                st.write(f"- {name}")
 
 
 main()
