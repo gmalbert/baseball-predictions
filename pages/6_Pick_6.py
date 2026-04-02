@@ -356,7 +356,8 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
 
     # Words that indicate a game-context line (NOT a prop line number)
     _SKIP_WORDS = frozenset({"pm", "am", "today", "bot", "top", "current", "curent",
-                              "starts", "start", "inning", "more", "less", "locked"})
+                              "starts", "start", "stants", "inning", "more", "less", "locked",
+                              "srkeouts", "irkeouts", "strikeouts"})
 
     def _extract_line(seg: str) -> float | None:
         # Skip game-matchup lines — they always contain "@" (e.g. "NYY @ SEA", "0@ HOU")
@@ -371,6 +372,12 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
         # countdown timers don't get confused for prop lines.
         seg = _time_pat.sub('', seg)
         nums = [float(m) for m in _line_search.findall(seg) if 0.5 <= float(m) <= 20.0]
+        # Recover OCR-dropped decimals: "6.5" sometimes OCRs as "65", "4.5" as "45".
+        # Match 2-digit numbers like X5 or X0 (15-95) that map to valid Pick 6 lines.
+        for raw in re.findall(r'\b([1-9][05])\b', seg):
+            v = int(raw) / 10
+            if 0.5 <= v <= 9.5 and v not in nums:
+                nums.append(v)
         if not nums:
             return None
         # Prefer fractional values (x.5) — typical DK Pick 6 lines
@@ -392,7 +399,7 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
     )
     _at_initial  = re.compile(r'@([A-Z])\b')              # "@A" → "A."
     _hyphen_init = re.compile(r'\b([A-Z])-([A-Z][a-z])')   # "R-Greene" → "R. Greene"
-    _sp_garble   = re.compile(r'\bS\?(?!\w)')              # "S?" → "SP" (OCR noise for SP)
+    _sp_garble   = re.compile(r'\bS\?(?!\w)|\$\?')       # "S?" or "$?" → "SP" (OCR noise for SP)
     _title_la    = re.compile(r'\bLa\s+([a-z]{3,15})\b')  # "La cruz" → "La Cruz"
     _pos_strip   = re.compile(r'\s+(?:SP|RP|OF|1B|2B|3B|SS|DH|CF|LF|RF|C)$', re.IGNORECASE)
 
@@ -497,13 +504,17 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
 # Known OCR corruption aliases: garbled_last_lower → real_last_lower.
 # Add entries here whenever a severely corrupted name is identified.
 _OCR_ALIAS: dict[str, str] = {
-    "onan":   "ohtani",
-    "ohtan":  "ohtani",
-    "ohtam":  "ohtani",
-    "rarper": "harper",
-    "harpe":  "harper",
-    "crusz":  "cruz",
-    "monty":  "montgomery",
+    "onan":      "ohtani",
+    "ohtan":     "ohtani",
+    "ohtam":     "ohtani",
+    "rarper":    "harper",
+    "harpe":     "harper",
+    "crusz":     "cruz",
+    "monty":     "montgomery",
+    "kevan":     "kwan",      # S. Kwan (CLE) — common OCR garble
+    "freemman":  "freeman",  # Freddie Freeman — double-m OCR artifact
+    "fefreeman": "freeman",
+    "wallner":   "wallner",  # M. Wallner — kept exact but normalises capitalisation
 }
 
 
