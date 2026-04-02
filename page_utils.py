@@ -188,17 +188,25 @@ def _load_game_context_cache() -> dict:
     out: dict = {
         "park_factors": {},
         "ump_park_avg": {},
+        "umpire_stats": {},
         "daynight": {},
         "bullpen_ip_pg": {},
         "platoon": {},
     }
 
+    # Load gameinfo once and share across all three sub-blocks below.
+    # This avoids holding 3 separate 258 MB copies in memory simultaneously.
+    try:
+        _gi_raw = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        _gi_raw["vruns"]      = pd.to_numeric(_gi_raw["vruns"], errors="coerce")
+        _gi_raw["hruns"]      = pd.to_numeric(_gi_raw["hruns"], errors="coerce")
+        _gi_raw["total_runs"] = _gi_raw["vruns"] + _gi_raw["hruns"]
+    except Exception:
+        _gi_raw = pd.DataFrame()
+
     # ── Park factors & day/night from gameinfo.parquet ─────────────────────
     try:
-        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
-        gi["vruns"] = pd.to_numeric(gi["vruns"], errors="coerce")
-        gi["hruns"] = pd.to_numeric(gi["hruns"], errors="coerce")
-        gi["total_runs"] = gi["vruns"] + gi["hruns"]
+        gi = _gi_raw.copy()
         max_szn = int(gi["season"].max())
         recent = gi[gi["season"] >= max_szn - 2].copy()
         league_rpg = recent["total_runs"].mean()
@@ -241,15 +249,21 @@ def _load_game_context_cache() -> dict:
     except Exception:
         pass
 
-    # ── Umpire park averages from gameinfo.csv ──────────────────────────────
+    # ── Umpire park averages (parquet fallback if CSV unavailable) ──────────
     try:
-        gi_csv = pd.read_csv(
-            _RETRO / "gameinfo.csv", low_memory=False,
-            usecols=lambda c: c in {"gid", "hometeam", "umphome", "vruns", "hruns", "season"},
-        )
-        gi_csv["season"] = pd.to_numeric(gi_csv["season"], errors="coerce")
-        gi_csv["vruns"] = pd.to_numeric(gi_csv["vruns"], errors="coerce")
-        gi_csv["hruns"] = pd.to_numeric(gi_csv["hruns"], errors="coerce")
+        _gi_csv_path = _RETRO / "gameinfo.csv"
+        if _gi_csv_path.exists():
+            gi_csv = pd.read_csv(
+                _gi_csv_path, low_memory=False,
+                usecols=lambda c: c in {"gid", "hometeam", "vruns", "hruns", "season"},
+            )
+        else:
+            # Re-use the already-loaded parquet rather than reading it again.
+            _needed = [c for c in ("gid", "hometeam", "vruns", "hruns", "season") if c in _gi_raw.columns]
+            gi_csv = _gi_raw[_needed].copy()
+        gi_csv["season"]     = pd.to_numeric(gi_csv["season"], errors="coerce")
+        gi_csv["vruns"]      = pd.to_numeric(gi_csv["vruns"], errors="coerce")
+        gi_csv["hruns"]      = pd.to_numeric(gi_csv["hruns"], errors="coerce")
         gi_csv["total_runs"] = gi_csv["vruns"] + gi_csv["hruns"]
         max_csv_szn = int(gi_csv["season"].dropna().max())
         recent_csv = gi_csv[gi_csv["season"] >= max_csv_szn - 2]
@@ -266,6 +280,53 @@ def _load_game_context_cache() -> dict:
             for _, r in ump_park.iterrows()
             if r.get("short")
         }
+    except Exception:
+        pass
+
+    # ── Per-umpire derived stats from gameinfo.parquet ─────────────────────
+    try:
+        gi_ump = _gi_raw.copy()
+        if "umphome" in gi_ump.columns:
+            gi_ump["vruns"]      = pd.to_numeric(gi_ump["vruns"], errors="coerce")
+            gi_ump["hruns"]      = pd.to_numeric(gi_ump["hruns"], errors="coerce")
+            gi_ump["total_runs"] = gi_ump["vruns"] + gi_ump["hruns"]
+            gi_ump["date"]       = pd.to_datetime(
+                gi_ump["date"].astype(str), format="%Y%m%d", errors="coerce"
+            )
+            gi_ump = gi_ump.sort_values("date").reset_index(drop=True)
+            league_ump_mean = float(gi_ump["total_runs"].mean())
+
+            ump_grp = (
+                gi_ump.groupby("umphome")["total_runs"]
+                .agg(runs_avg="mean", games="count")
+                .reset_index()
+            )
+            ump_grp.columns = ["ump_id", "runs_avg", "games"]
+            ump_grp["over_mean"] = (ump_grp["runs_avg"] - league_ump_mean).round(2)
+            ump_grp["above_avg"] = ump_grp["runs_avg"] > league_ump_mean
+
+            def _ump_trend(grp: pd.DataFrame) -> float:
+                vals = grp.sort_values("date")["total_runs"].values
+                if len(vals) < 40:
+                    return 0.0
+                return round(float(vals[-20:].mean() - vals[-40:-20].mean()), 2)
+
+            trends = gi_ump.groupby("umphome").apply(_ump_trend).reset_index()
+            trends.columns = ["ump_id", "trend"]
+            ump_grp = ump_grp.merge(trends, on="ump_id", how="left")
+            ump_grp["trend"] = ump_grp["trend"].fillna(0.0)
+
+            out["umpire_stats"] = {
+                r["ump_id"]: {
+                    "runs_avg": round(float(r["runs_avg"]), 2),
+                    "over_mean": float(r["over_mean"]),
+                    "games": int(r["games"]),
+                    "above_avg": bool(r["above_avg"]),
+                    "trend": float(r["trend"]),
+                }
+                for _, r in ump_grp.iterrows()
+                if pd.notna(r["ump_id"])
+            }
     except Exception:
         pass
 
@@ -314,6 +375,118 @@ def _load_game_context_cache() -> dict:
         pass
 
     return out
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_game_umpires(game_pk: int) -> dict:
+    """Fetch the umpire crew for a specific game via the MLB Stats API.
+
+    Returns a dict with keys: home_plate, first, second, third (str names).
+    Typically available 1–2 hours before first pitch.
+    """
+    if not game_pk:
+        return {}
+    try:
+        data = statsapi.get(
+            "game",
+            {"gamePk": game_pk, "fields": "liveData,boxscore,officials"},
+        )
+        officials = data.get("liveData", {}).get("boxscore", {}).get("officials", [])
+        _type_map = {
+            "Home Plate": "home_plate",
+            "First Base":  "first",
+            "Second Base": "second",
+            "Third Base":  "third",
+        }
+        result: dict = {}
+        for off in officials:
+            otype = off.get("officialType", "")
+            name  = off.get("official", {}).get("fullName", "")
+            if otype in _type_map and name:
+                result[_type_map[otype]] = name
+        return result
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_retrosheet_game_umpires(home_retro: str, away_retro: str, game_date: str) -> dict:
+    """Locate umpire IDs for a game from Retrosheet gameinfo.parquet.
+
+    home_retro / away_retro are short team names (e.g. 'Blue Jays').
+    game_date should be 'YYYY-MM-DD'.
+    Returns keys home_plate, first, second, third (strings), may be empty.
+    """
+    try:
+        if not home_retro or not away_retro or not game_date:
+            return {}
+
+        _RETRO = ROOT / "data_files" / "retrosheet"
+        gi = pd.read_parquet(_RETRO / "gameinfo.parquet")
+        if "date" not in gi.columns or "hometeam" not in gi.columns or "visteam" not in gi.columns:
+            return {}
+
+        # Build short->code and code->short mappings from TEAM_NAMES
+        code_to_short = {k: v for k, v in TEAM_NAMES.items()}
+        short_to_code = {v: k for k, v in code_to_short.items()}
+
+        home_code = short_to_code.get(home_retro)
+        away_code = short_to_code.get(away_retro)
+        if not home_code or not away_code:
+            return {}
+
+        gi = gi.copy()
+        gi["game_date"] = pd.to_datetime(gi["date"].astype(str), format="%Y%m%d", errors="coerce").dt.date
+        target_date = pd.to_datetime(game_date, errors="coerce").date()
+        if pd.isna(target_date):
+            return {}
+
+        match = gi[
+            (gi["hometeam"] == home_code) &
+            (gi["visteam"] == away_code) &
+            (gi["game_date"] == target_date)
+        ]
+        if match.empty:
+            return {}
+
+        row = match.iloc[0]
+        return {
+            "home_plate": str(row.get("umphome", "")).strip() if not pd.isna(row.get("umphome", "")) else "",
+            "first":      str(row.get("ump1b", "")).strip() if not pd.isna(row.get("ump1b", "")) else "",
+            "second":     str(row.get("ump2b", "")).strip() if not pd.isna(row.get("ump2b", "")) else "",
+            "third":      str(row.get("ump3b", "")).strip() if not pd.isna(row.get("ump3b", "")) else "",
+        }
+    except Exception:
+        return {}
+
+
+def _lookup_ump_retro_id(name: str, ump_stats: dict) -> str | None:
+    """Fuzzy-match an umpire's full name to a Retrosheet ump ID.
+
+    Retrosheet IDs follow the pattern last(4)f(1)NNN, e.g. 'barrj901'.
+    We try exact ID first, then last4+first1 prefix, then just last4.
+    Returns the matched retro ID string, or None if no match found.
+    """
+    if not name or not ump_stats:
+        return None
+
+    # If caller already provided a valid retrosheet ID, accept it directly.
+    if name in ump_stats:
+        return name
+
+    parts = name.lower().split()
+    if len(parts) < 2:
+        return None
+    last4   = parts[-1][:4]
+    first1  = parts[0][0]
+    prefix5 = last4 + first1
+    for uid in ump_stats:
+        if uid.lower().startswith(prefix5):
+            return uid
+    for uid in ump_stats:
+        if uid.lower().startswith(last4):
+            return uid
+    return None
 
 
 @st.cache_data(show_spinner=False, ttl=3600)

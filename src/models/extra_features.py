@@ -100,7 +100,11 @@ def _load_teamstats_csv(min_year: int, max_year: int) -> pd.DataFrame:
     else:
         ts = pd.read_parquet(_RETRO / "teamstats.parquet")
         ts = ts[[c for c in ts.columns if c in wanted]]
-    ts = ts[ts["stattype"] == "value"].copy()
+    # 'stattype' is dropped from lean parquets (all rows are already 'value').
+    if "stattype" in ts.columns:
+        ts = ts[ts["stattype"] == "value"].copy()
+    else:
+        ts = ts.copy()
     for col in ts.columns:
         if col not in ("gid", "team", "stattype", "date", "vishome", "opp"):
             ts[col] = pd.to_numeric(ts[col], errors="coerce")
