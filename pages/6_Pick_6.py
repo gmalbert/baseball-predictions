@@ -385,9 +385,11 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
         return frac[0] if frac else nums[0]
 
     # Fallback name pattern: just "LastName POSITION" when initial dot is missing
+    # re.IGNORECASE lets 'oF', 'sp', etc. match; looser boundary catches 'oF7ss'
     fallback_name_pat = re.compile(
         r'(?<![A-Za-z])([A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,10})?)'
-        r'\s+(?:SP|RP|OF|1B|2B|3B|SS|C\b|DH|CF|LF|RF)\b'
+        r'\s+(?:SP|RP|OF|1B|2B|3B|SS|C\b|DH|CF|LF|RF)',
+        re.IGNORECASE,
     )
     # Softer fallback: "Freeman 78" — name followed by 2-3 digit number (jersey/ownership %)
     fallback_num_pat = re.compile(
@@ -401,6 +403,11 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
     _hyphen_init = re.compile(r'\b([A-Z])-([A-Z][a-z])')   # "R-Greene" → "R. Greene"
     _sp_garble   = re.compile(r'\bS\?(?!\w)|\$\?')       # "S?" or "$?" → "SP" (OCR noise for SP)
     _title_la    = re.compile(r'\bLa\s+([a-z]{3,15})\b')  # "La cruz" → "La Cruz"
+    # Strip lowercase OCR junk prefix immediately before a capital name/initial,
+    # e.g. "ky FeFreemman" → "FeFreemman", "AY forte" → "Forte"
+    _garble_prefix = re.compile(r'(?:^|\s)[a-z]{1,3}\s+([A-Z][A-Za-z]{2,15})\b')
+    # Unwrap CamelCase-merged OCR tokens, e.g. "FeFreemman" → "Freemman"
+    _camel_split   = re.compile(r'\b[A-Z][a-z]{0,3}([A-Z][a-z]{3,15})\b')
     _pos_strip   = re.compile(r'\s+(?:SP|RP|OF|1B|2B|3B|SS|DH|CF|LF|RF|C)$', re.IGNORECASE)
 
     def _preprocess(line: str) -> str:
@@ -408,7 +415,11 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
         line = _hyphen_init.sub(lambda m: m.group(1) + '. ' + m.group(2), line)
         line = _sp_garble.sub('SP', line)
         line = _title_la.sub(lambda m: 'La ' + m.group(1).capitalize(), line)
-        return line
+        # Capitalise words that OCR lowercased after a junk prefix, e.g. "ky forte" → "Forte"
+        line = _garble_prefix.sub(lambda m: ' ' + m.group(1), line)
+        # Unwrap CamelCase-merged OCR tokens, e.g. "FeFreemman" → "Freemman"
+        line = _camel_split.sub(lambda m: m.group(1), line)
+        return line.strip()
 
     def _find_all_names(line: str) -> list[tuple[str, str]]:
         """All (initial, last_name) tokens on this line, sorted by character position."""
@@ -434,6 +445,14 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
                 s, e = nm.start(), nm.end()
                 if not any(s < r[3] and e > r[2] for r in results):
                     results.append(('?', ln, s, e))
+        # Last-resort: after CamelCase splitting the line may be a bare Name with
+        # no position or number context (e.g. "Freemman" after "FeFreemman" split).
+        # Only fire when nothing else matched AND the line is a single capitalised word
+        # that is in the OCR alias table (i.e. it's a known garble, not random text).
+        if not results:
+            lone = re.fullmatch(r'([A-Z][a-z]{3,15})', line.strip())
+            if lone and lone.group(1).lower() in _OCR_ALIAS:
+                results.append(('?', lone.group(1), 0, len(lone.group(1))))
         # Ampersand prefix: "& Montgomery"
         for nm in ampersand_name_pat.finditer(line):
             ln = nm.group(1).strip()
@@ -507,6 +526,7 @@ _OCR_ALIAS: dict[str, str] = {
     "onan":      "ohtani",
     "ohtan":     "ohtani",
     "ohtam":     "ohtani",
+    "ohtant":    "ohtani",   # S.Ohtant OCR garble
     "rarper":    "harper",
     "harpe":     "harper",
     "crusz":     "cruz",
@@ -515,6 +535,9 @@ _OCR_ALIAS: dict[str, str] = {
     "freemman":  "freeman",  # Freddie Freeman — double-m OCR artifact
     "fefreeman": "freeman",
     "wallner":   "wallner",  # M. Wallner — kept exact but normalises capitalisation
+    "bens":      "benson",   # W. Benson — truncated OCR
+    "forte":     "fortes",   # Jose Fortes / similar — OCR strips trailing 's'
+    "haart":     "hernandez",# T. Hernandez — heavy OCR garble
 }
 
 
