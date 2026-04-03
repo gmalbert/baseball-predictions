@@ -251,6 +251,8 @@ _DK_PROP_MAP: dict[str, str] = {
     "trrown":                   "Strikeouts",
     # Hits+Runs+RBI variants including OCR garble
     "rune + r":                 "Hits+Runs+RBI",
+    "runs rls":                 "Hits+Runs+RBI",   # 'te Runs Rls' after garble-prefix strip
+    "runs rs":                  "Hits+Runs+RBI",   # 'tt Runs Rs' after garble-prefix strip
     # Hits + Runs + RBIs variants
     "hits + runs + rbis":       "Hits+Runs+RBI",
     "hits+runs+rbis":           "Hits+Runs+RBI",
