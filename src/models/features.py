@@ -41,6 +41,7 @@ from src.models.extra_features import (
     lob_features,
     weather_interaction_features,
     umpire_features,
+    umpire_position_features,
     pythagorean_diff_features,
     baserunning_features,
     bullpen_fatigue_features,
@@ -84,6 +85,9 @@ _CONTEXT_FEATURES = [
     "wind_out", "wind_in", "dome_flag", "temp_cold", "temp_hot", "overcast_flag",
     # extra: umpire (6.3)
     "ump_runs_avg", "ump_above_avg_flag",
+    "ump_home_games", "ump_home_over_mean", "ump_home_trend",
+    # extra: umpire positions (6.3b)
+    "ump1b_runs_avg", "ump2b_runs_avg", "ump3b_runs_avg",
     # extra: rest days (3.3)
     "home_days_rest", "away_days_rest",
     "home_back_to_back", "away_back_to_back", "is_doubleheader",
@@ -378,11 +382,19 @@ def build_model_features(min_year: int = 2020, max_year: int = _CUR_YEAR) -> pd.
     for col in ("wind_out", "wind_in", "dome_flag", "temp_cold", "temp_hot", "overcast_flag"):
         feat[col] = feat[col].fillna(0.0)
 
-    # 6.3 Umpire tendencies
+    # 6.3 Umpire tendencies (plate umpire)
     feat = feat.merge(umpire_features(min_year, max_year), on="gid", how="left")
     league_runs = feat["ump_runs_avg"].median()
-    feat["ump_runs_avg"]      = feat["ump_runs_avg"].fillna(league_runs)
+    feat["ump_runs_avg"]       = feat["ump_runs_avg"].fillna(league_runs)
     feat["ump_above_avg_flag"] = feat["ump_above_avg_flag"].fillna(0.0)
+    feat["ump_home_games"]     = feat["ump_home_games"].fillna(0).astype(int)
+    feat["ump_home_over_mean"] = feat["ump_home_over_mean"].fillna(0.0)
+    feat["ump_home_trend"]     = feat["ump_home_trend"].fillna(0.0)
+
+    # 6.3b Umpire position tendencies (1B/2B/3B)
+    feat = feat.merge(umpire_position_features(min_year, max_year), on="gid", how="left")
+    for _uc in ("ump1b_runs_avg", "ump2b_runs_avg", "ump3b_runs_avg"):
+        feat[_uc] = feat[_uc].fillna(league_runs)
 
     # 7.1 Pythagorean differential
     _pd = pythagorean_diff_features(min_year, max_year)

@@ -37,6 +37,10 @@ plotly>=5.18            # Interactive charts
 statsmodels>=0.14       # Required for Plotly lowess trendlines
 altair>=5.2             # Alternative charting (optional)
 
+# ---- Screenshot / OCR (Pick 6 import) ----
+Pillow>=10.0            # Image processing
+pytesseract>=0.3.10     # Tesseract OCR wrapper (requires tesseract-ocr system package)
+
 # ---- Optional: REST API (uncomment if needed) ----
 # fastapi>=0.109
 # uvicorn[standard]>=0.27

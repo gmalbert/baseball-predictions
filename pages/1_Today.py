@@ -25,6 +25,9 @@ from page_utils import (
     _fetch_pitcher_throw_hand,
     _fetch_team_il_players,
     _fetch_team_rest_days,
+    _fetch_game_umpires,
+    _fetch_retrosheet_game_umpires,
+    _lookup_ump_retro_id,
     render_sidebar,
     init_session_state,
     add_betting_oracle_footer,
@@ -205,6 +208,91 @@ if st.session_state["schedule_selected_game"] is not None:
         sp_lbl_h = f"{home_sp.split()[-1] if home_sp != 'TBD' else 'TBD'} ({_home_sp_hand}HP)"
         st.caption(f"Away SP: **{sp_lbl_a}** → Home batters: {_home_bat_adv}")
         st.caption(f"Home SP: **{sp_lbl_h}** → Away batters: {_away_bat_adv}")
+
+    # ── ⚖️ Umpire Profile ─────────────────────────────────────────────────────
+    with st.expander("⚖️ Umpire Profile", expanded=True):
+        _ump_stats   = _ctx.get("umpire_stats", {})
+        _game_pk     = g.get("game_id")
+        _game_date   = g.get("game_date") or None
+        if not _game_date:
+            _gdt = g.get("game_datetime", "")
+            if "T" in _gdt:
+                _game_date = _gdt.split("T")[0]
+
+        _umps = _fetch_game_umpires(_game_pk) if _game_pk else {}
+
+        # Fallback to Retrosheet gameinfo if MLB API umpire assignments not yet posted
+        if (not _umps or not _umps.get("home_plate")) and _game_date:
+            _retro_umps = _fetch_retrosheet_game_umpires(home_retro, away_retro, _game_date)
+            if _retro_umps:
+                _umps = {
+                    "home_plate": _umps.get("home_plate") or _retro_umps.get("home_plate", ""),
+                    "first":      _umps.get("first") or _retro_umps.get("first", ""),
+                    "second":     _umps.get("second") or _retro_umps.get("second", ""),
+                    "third":      _umps.get("third") or _retro_umps.get("third", ""),
+                }
+
+        _plate_name  = _umps.get("home_plate", "")
+        _1b_name     = _umps.get("first", "")
+        _2b_name     = _umps.get("second", "")
+        _3b_name     = _umps.get("third", "")
+
+        # Try to cross-reference the plate ump name or ID with Retrosheet data
+        _plate_retro = _lookup_ump_retro_id(_plate_name, _ump_stats)
+        _plate_data  = _ump_stats.get(_plate_retro, {}) if _plate_retro else {}
+
+        _uc1, _uc2, _uc3 = st.columns(3)
+        with _uc1:
+            st.markdown(f"**🧑‍⚖️ Plate:** {_plate_name or 'TBD'}")
+        with _uc2:
+            if _1b_name:
+                st.caption(f"**1B:** {_1b_name}")
+            if _2b_name:
+                st.caption(f"**2B:** {_2b_name}")
+        with _uc3:
+            if _3b_name:
+                st.caption(f"**3B:** {_3b_name}")
+
+        if _plate_data:
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _m1.metric(
+                "📊 Avg Runs/G",
+                f"{_plate_data['runs_avg']:.2f}",
+                help="Historical average total runs per game when this umpire works the plate.",
+            )
+            _m2.metric(
+                "🎮 Career Games",
+                f"{_plate_data['games']:,}",
+                help="Total games officiated in the Retrosheet database.",
+            )
+            _over_val  = _plate_data["over_mean"]
+            _over_sign = f"{_over_val:+.2f}"
+            _m3.metric(
+                "↕ vs League Avg",
+                _over_sign,
+                delta="Over avg" if _over_val > 0 else "Under avg",
+                delta_color="normal",
+                help="This umpire's avg runs/game minus the overall league average. Positive = higher-scoring games.",
+            )
+            _trend_val = _plate_data["trend"]
+            _m4.metric(
+                "📈 Trend (20g)",
+                f"{_trend_val:+.2f}",
+                delta="Rising" if _trend_val > 0.2 else ("Falling" if _trend_val < -0.2 else "Stable"),
+                delta_color="normal",
+                help="Difference in runs/game between the last 20 and the prior 20 games for this umpire.",
+            )
+            _tend_icon = "🔺 Higher-run environment" if _plate_data["above_avg"] else "🔻 Lower-run environment"
+            st.caption(f"**Tendency:** {_tend_icon}  ·  Retrosheet ID: `{_plate_retro}`")
+        elif _plate_name:
+            st.caption(
+                f"No Retrosheet match found for **{_plate_name}**. "
+                "Historical metrics unavailable — retrosheet and statsapi IDs may not align."
+            )
+        else:
+            st.caption(
+                "Umpire assignments not yet posted — typically available 1–2 hours before first pitch."
+            )
 
     st.divider()
 
