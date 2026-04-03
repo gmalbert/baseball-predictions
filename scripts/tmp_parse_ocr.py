@@ -44,116 +44,99 @@ _DK_PROP_MAP = {
     "runs scored": "Runs", "runs": "Runs",
 }
 
+# ─── April 2 2026 slate: NYM @ SF  +  ATL @ ARI ──────────────────────────────
+# OCR text is approximate Tesseract output from DK Pick 6 screenshot.
+# Noise patterns: team logo → stray char, dot sometimes dropped from initial,
+# position rendered as "3B/OF" or "1B/OF", (L)/(R) often garbled.
+
 COL1 = """
-Jy Yamamoto SP (n)
-cle @ Lap
-stants 52:21
-= 65 +
-irkeouts Thrown,
-More Less
+® R. Ray SP CLJ
+NYM @ SF
+Today, 9:45 PM
+— 5.5 +
+Strikeouts Thrown
+f More j Less
 
-Jy S.Ohtant OF
-CLE @ LAD Williams (R)
-Starts 52:21
-6 2.5 +
-te Runs Rls
-More
+C. Carroll OF (L)
+ATL @ ARI P: Lopez (R)
+Starts in 59:50
+— 1.5 +
+Hits + Runs + RBIs
+f More 0.9x
 
-Ih W Bens oF7ss
-CLE @ LAD Williams (R)
-Starts 52:21
-1.5 +
-te Runs Rls
-More Less
+Bo Bichette 3B/SS (R)
+NYM @ SF P: Ray
+Today, 9:45 PM
+— 1.5 +
+Hits + Runs + RBIs
+f More j Less
 
-PS a} E
-CLE @ LAD Williams (R)
-Starts 52:21
-1.5 +
-Total Bases (From Hits)
+J. Soto OF CL)
+NYM @ SF P: Ray (L)
+Today, 9:45 PM
+— 1.5 +
+Hits + Runs + RBIs
+f More j Less
 """
 
 COL2 = """
-ps Ryan SP
-MIN @ KC
-stars in 1221
-5.5 + =
-rikecuts Thrown
-More
+® D. Peterson SP (L)
+NYM @ SF
+Today, 9:45 PM
+— 4.5 +
+Strikeouts Thrown
+0.9x More
 
-ce @ LAD
-stars n5221
-5.5
-tikes Tron
-More
+K. Marte 2B (S)
+ATL @ ARI P: Lopez (R)
+Starts in 59:50
+— 1.5 +
+Hits + Runs + RBIs
+0.9x More
 
-AY forte
-MIN @ KC Cameron (L)
-Starts in 12 21
-1.5 +
-tt Runs Rs
-More
+M. Chapman 38 cR)
+NYM @ SF P: Peterson (L)
+Today, 9:45 PM
+— 1.5 +
+Hits + Runs + RBIs
+f More j Less
 
-MIN @ KC Ryan
-Stars in 12:21
-1.5
-Hits Runs B
-More
-
-ky FeFreemman
-CLE @ LAD Yamamoto
-Stars in 5221
-1.5 +
-tt Runs Rs
-More
-
-CLE @ LAD
-Stars in 5221
-1.5
+M. Olson 1B/OF (L)
+ATL @ ARI P: Nelson (R)
+Starts in 59:50
+— 1.5 +
 Total Bases (From Hits)
-More
-
-a haart
-MIN @ KC Cameron
-Starts in 12 21
-0.5 +
-Singles
-More
-
-WK Tucker oF
-CLE @ LAD William
-Stars in 5221
-0.5 +
-Runs Batted In
+1.1x More
 """
 
 COL3 = """
-GIN. Cameron SP
-MIN @ KC
-stants in 12:21
-+ 45 +
-Strikeouts Thrown
-More Less
+A R. Acuna Jr. OF (R)
+ATL @ ARI P: Nelson (R)
+Starts in 59:50
+— 2.5 +
+Hits + Runs + RBIs
+f More
 
-ps Ryan (R)
-MIN @ KC
-Stars in 12:21
-+ 1.5 +
-Total Bases From Hits
-More Less
+A. Riley 3B/OF (R)
+ATL @ ARI P: Nelson (R)
+Starts in 59:50
+— 1.5 +
+Total Bases (From Hits)
+f More
 
-pA Kevan OF
-CLE @ LAD Yamamoto (R)
-Starts 52:21
-+ 1.5 +
-ts te Runs Rls
-More
+F. Lindor SS CS)
+NYM @ SF P: Ray (L)
+Today, 9:45 PM
+— 1.5 +
+Hits + Runs + RBIs
+f More j Less
 
-ps M. Wallner OF
-MIN @ KC Cameron (L)
-Starts in 12:21
-+ 0.5 +
-Runs Batted In
+W. Adames SS (R)
+NYM @ SF P: Peterson (L)
+Today, 9:45 PM
+— 1.5 +
+Total Bases (From Hits)
+1.2x More
 """
 
 

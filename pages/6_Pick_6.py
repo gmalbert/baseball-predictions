@@ -326,11 +326,15 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
     img = Image.open(io.BytesIO(image_bytes))
     W, H = img.size
 
-    # DK cards sit in a 3-column grid — OCR each column independently for correct line order.
+    # DK cards sit in a 3-column grid.
+    # Use 2% inset on each side of every crop so that card boundaries (which
+    # vary slightly across different phone/screen sizes) never bisect a name line.
+    inset = max(1, W // 50)           # ~2% of image width
+    col_w = W // 3
     columns = [
-        img.crop((0,        0, W // 3,      H)),
-        img.crop((W // 3,   0, 2 * W // 3,  H)),
-        img.crop((2 * W//3, 0, W,            H)),
+        img.crop((0,               0, col_w - inset,          H)),
+        img.crop((col_w + inset,   0, 2 * col_w - inset,      H)),
+        img.crop((2 * col_w + inset, 0, W,                    H)),
     ]
 
     def _ocr_col(col_img: "Image.Image") -> str:
@@ -339,7 +343,17 @@ def _parse_dk_screenshot(image_bytes: bytes) -> tuple[list[dict], str]:
         # PSM 6 = single uniform block; more reliable than PSM 4 for card grids
         return pytesseract.image_to_string(grey, config="--psm 6 --oem 1")
 
+    def _ocr_full(full_img: "Image.Image") -> str:
+        """Full-image sparse-text pass using PSM 11.
+        Catches any picks that PSM-6 column crops miss due to layout differences."""
+        grey = full_img.convert("L")
+        grey = ImageEnhance.Contrast(grey).enhance(2.0)
+        return pytesseract.image_to_string(grey, config="--psm 11 --oem 1")
+
     raw_parts = [_ocr_col(c) for c in columns]
+    # 4th pass: full image with sparse-text mode as a safety-net for any pick
+    # that fell on a column boundary in the crop-based passes above.
+    raw_parts.append(_ocr_full(img))
     raw_text  = "\n---col---\n".join(raw_parts)
 
     # ── Name pattern ────────────────────────────────────────────────────────
@@ -560,6 +574,11 @@ def _match_player(pick: dict, registry: pd.DataFrame, season: int) -> tuple[str 
     last     = _OCR_ALIAS.get(raw_last, raw_last)   # step 1: alias table
     initial  = pick["first_initial"].upper()
 
+    # Strip common name suffixes that OCR captures but the registry may omit.
+    # "acuna jr" → "acuna", "smith ii" → "smith"
+    _suffix_re = re.compile(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)$', re.IGNORECASE)
+    last_base = _suffix_re.sub('', last).strip()   # stripped version for fallback
+
     # Prefer current-season rows; fall back to all seasons
     season_reg = registry[registry["season"] == season]
     if season_reg.empty:
@@ -576,18 +595,31 @@ def _match_player(pick: dict, registry: pd.DataFrame, season: int) -> tuple[str 
         row = df.sort_values("season", ascending=False).iloc[0]
         return str(row["id"]), str(row["full_name"])
 
-    # Step 2: exact word-boundary match
-    pattern = r'\b' + re.escape(last) + r'\b'
-    exact = season_reg[
-        season_reg["full_name"].str.lower().str.contains(pattern, regex=True, na=False)
-    ]
-    if not exact.empty:
-        return _best(exact)
+    # Step 2: exact word-boundary match (try full form; re-try with suffix stripped)
+    for candidate_last in dict.fromkeys([last, last_base]):   # deduped, order-preserving
+        if not candidate_last:
+            continue
+        pattern = r'\b' + re.escape(candidate_last) + r'\b'
+        exact = season_reg[
+            season_reg["full_name"].str.lower().str.contains(pattern, regex=True, na=False)
+        ]
+        if not exact.empty:
+            return _best(exact)
 
-    # Step 3: fuzzy match on distinct last names in the registry
-    last_names = season_reg["full_name"].str.lower().str.split().str[-1].dropna().unique()
+    # Step 3: fuzzy match on distinct last names in the registry.
+    # Build corpus from the LAST word of each full_name PLUS every individual word,
+    # so "Acuña Jr." can be found whether the registry stores it as last word "jr."
+    # or as a word "acuña" anywhere in the name.
+    all_words = (
+        season_reg["full_name"].str.lower()
+        .str.findall(r'[a-záéíóúñü]{3,}')   # all words ≥ 3 chars  
+        .explode()
+        .dropna()
+        .unique()
+    )
+    last_names = all_words   # broader corpus for fuzzy matching
     scored = [
-        (SequenceMatcher(None, last, ln).ratio(), ln)
+        (SequenceMatcher(None, last_base or last, ln).ratio(), ln)
         for ln in last_names
     ]
     scored.sort(reverse=True)
@@ -596,7 +628,8 @@ def _match_player(pick: dict, registry: pd.DataFrame, season: int) -> tuple[str 
         # When no first initial is available, require the OCR name's first letter
         # matches the fuzzy-matched last name's first letter to avoid e.g.
         # "Kevan" (OCR of "Kwan") matching "Evans" instead.
-        if initial == '?' and last and best_ln and last[0] != best_ln[0]:
+        check_last = last_base or last
+        if initial == '?' and check_last and best_ln and check_last[0] != best_ln[0]:
             return None, None
         fuzzy_pat = r'\b' + re.escape(best_ln) + r'\b'
         fuzzy = season_reg[
