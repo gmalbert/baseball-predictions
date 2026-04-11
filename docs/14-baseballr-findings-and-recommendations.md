@@ -1,4 +1,4 @@
-# 14 — baseballr Findings & Recommendations
+cd # 14 — baseballr Findings & Recommendations
 
 Review of **[BillPetti/baseballr](https://github.com/BillPetti/baseballr)** (R package, v1.6.0) for data source ideas,
 metric calculations, scraping patterns, and model features that can be ported to this Python project.
