@@ -24,8 +24,16 @@ jobs:
         run: |
           # run even off-season; the script itself exits gracefully
           python scripts/nightly_savant_refresh.py
-          
-      
+
+      - name: Refresh current-season retrosheet data
+        run: |
+          # update 2026 game logs, batting, pitching, and player registry
+          python scripts/fetch_current_season.py
+
+      - name: Refresh reference data (Guts!, park factors, Chadwick)
+        run: |
+          python scripts/fetch_reference_data.py
+
       - name: Run ingestion (season-aware)
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}

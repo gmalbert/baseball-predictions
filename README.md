@@ -52,6 +52,13 @@ MLB betting analytics platform for daily wagering insights, model backtesting, a
 - Pick history and entry-level policies (confidence tiers: HIGH/MEDIUM/LOW)
 - Kelly criterion calculator (`src/bankroll/kelly.py`) and bankroll growth simulation
 
+### Recent updates
+- Added live current-season support for 2026 team batting, team pitching, standings, and player leaderboards.
+- Added early-season supplement handling for `batting_current.parquet`, `pitching_current.parquet`, `gameinfo_current.parquet`, and `teamstats_current.parquet`.
+- Added reference-data ingestion for FanGraphs Guts! weights, FanGraphs park factors, and the Chadwick player registry.
+- Added live fallback logic in Stats and Pick 6 pages so current-year data appears before a full precompute refresh.
+- Updated nightly ingestion workflow and scheduler to refresh reference data automatically.
+
 ### Data Ingestion & Pipeline
 - Custom ingestion scripts in `scripts/` and `src/ingestion/`:
   - `fetch_savant_leaderboards.py`, `build_parquet_data.py`, `precompute_data.py`

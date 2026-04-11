@@ -57,10 +57,12 @@ def run() -> None:
     _save(season_team_pitching(MIN_YEAR, MAX_YEAR), "team_pitching")
 
     print("  Batting leaders…")
-    _save(season_batting_leaders(MIN_YEAR, MAX_YEAR), "batting_leaders")
+    # min_pa=1 so the current in-season year is never filtered to empty;
+    # the display layer (Stats page, Pick 6) applies its own PA/IP filters.
+    _save(season_batting_leaders(MIN_YEAR, MAX_YEAR, min_pa=1), "batting_leaders")
 
     print("  Pitching leaders…")
-    _save(season_pitching_leaders(MIN_YEAR, MAX_YEAR), "pitching_leaders")
+    _save(season_pitching_leaders(MIN_YEAR, MAX_YEAR, min_ip=1), "pitching_leaders")
 
     print("  Model features…")
     feat_df = build_model_features(MIN_YEAR, MAX_YEAR)

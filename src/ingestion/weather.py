@@ -216,6 +216,30 @@ def fetch_forecast(venue_name: str, game_date_str: str) -> dict | None:
         return None
 
 
+def fetch_weather_for_games(schedule: pd.DataFrame) -> pd.DataFrame:
+    """Fetch weather data for a schedule DataFrame of games."""
+    rows: list[dict] = []
+    for _, row in schedule.iterrows():
+        venue = str(row.get("venue", ""))
+        game_date = str(row.get("date", ""))
+        if not venue or not game_date:
+            continue
+        payload = fetch_forecast(venue, game_date)
+        if payload is None:
+            continue
+        rows.append(
+            {
+                "game_id": row.get("game_id"),
+                "temp_f": payload.get("temp_f"),
+                "wind_mph": payload.get("wind_mph"),
+                "wind_dir_deg": payload.get("wind_dir_deg"),
+                "precip_prob_pct": 100.0 if payload.get("precip_mm", 0.0) > 0 else 0.0,
+                "is_dome": payload.get("is_dome", False),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Public API — bulk historical fetch (one API call per stadium)
 # ---------------------------------------------------------------------------

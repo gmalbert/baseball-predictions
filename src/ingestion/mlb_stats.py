@@ -79,5 +79,93 @@ def fetch_todays_probable_pitchers() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def fetch_game_pace(year: int) -> pd.DataFrame:
+    """Fetch game-pace metrics for a season from the MLB Stats API.
+
+    Includes average innings pitched, game duration, pitches per plate appearance,
+    and total runs per game — useful context for totals model calibration.
+
+    Args:
+        year: The MLB season.
+
+    Returns:
+        DataFrame with columns: season, league, games, avg_game_duration_min,
+        avg_innings, runs_per_game, pitches_per_pa.
+        Returns an empty DataFrame if the endpoint is unavailable.
+    """
+    try:
+        data = statsapi.get(
+            "schedule_games_pace",
+            {"season": year, "sportId": 1},
+        )
+        items = data.get("gamesPaced", [])
+        rows = []
+        for item in items:
+            rows.append({
+                "season": year,
+                "league": item.get("leagueAbbreviation", "MLB"),
+                "games": item.get("gamesPlayed"),
+                "avg_game_duration_min": item.get("avgGameDurationMinutes"),
+                "avg_innings": item.get("avgInningsPlayed"),
+                "runs_per_game": item.get("runsPerGame"),
+                "pitches_per_pa": item.get("pitchesPerPlateAppearance"),
+            })
+        return pd.DataFrame(rows)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "fetch_game_pace failed for %d: %s", year, exc
+        )
+        return pd.DataFrame()
+
+
+def fetch_streaks(year: int, streak_type: str = "wins", threshold: int = 4) -> pd.DataFrame:
+    """Fetch current hot/cold streaks for teams via the MLB Stats API.
+
+    Uses the ``/stats/streaks`` endpoint to identify teams on notable
+    win or loss streaks — a signal for short-term momentum in moneyline models.
+
+    Args:
+        year:        The MLB season.
+        streak_type: "wins" or "losses".
+        threshold:   Minimum streak length to include.
+
+    Returns:
+        DataFrame with columns: team, streak_type, streak_length, season.
+        Returns an empty DataFrame if the endpoint is unavailable.
+    """
+    try:
+        stat_type = "wins" if streak_type.lower() == "wins" else "losses"
+        data = statsapi.get(
+            "stats_streaks",
+            {
+                "season": year,
+                "sportId": 1,
+                "streakType": stat_type,
+                "streakSpan": "career",
+                "gameType": "R",
+                "limit": 50,
+            },
+        )
+        rows = []
+        for entry in data.get("streaks", []):
+            length = entry.get("streakLength", 0)
+            if length >= threshold:
+                team_info = entry.get("team", {}) or entry.get("player", {})
+                rows.append({
+                    "team": team_info.get("name", ""),
+                    "streak_type": stat_type,
+                    "streak_length": length,
+                    "season": year,
+                })
+        return pd.DataFrame(rows)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "fetch_streaks failed for %d/%s: %s", year, streak_type, exc
+        )
+        return pd.DataFrame()
+
+
 if __name__ == "__main__":
     fetch_all_schedules()

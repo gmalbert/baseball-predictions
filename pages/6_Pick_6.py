@@ -53,7 +53,12 @@ def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_hei
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 _CUR_YEAR = datetime.date.today().year
-_SEASONS   = list(range(2020, _CUR_YEAR + 1))
+
+# Retrosheet season selector uses available data, not the calendar year.
+@st.cache_data(show_spinner=False)
+def _available_seasons(min_year: int = 2020, max_year: int = _CUR_YEAR) -> list[int]:
+    seasons = _player_registry(min_year, max_year)["season"].dropna().astype(int).unique().tolist()
+    return sorted(seasons) if seasons else [min_year]
 
 # DraftKings Pick 6 batter prop categories
 BATTER_PROPS = ["Hits", "Home Runs", "RBI", "Runs", "Total Bases", "Hits+Runs+RBI"]
@@ -135,7 +140,9 @@ def _player_registry(min_year: int = 2020, max_year: int = _CUR_YEAR) -> pd.Data
 
 @st.cache_data(show_spinner=False)
 def _batting_leaders_cached(min_year: int = 2020, max_year: int = _CUR_YEAR) -> pd.DataFrame:
-    return season_batting_leaders(min_year, max_year)
+    # Use min_pa=1 so the in-season current year isn't filtered to empty;
+    # the page-level PA >= 50 filter handles the display cutoff.
+    return season_batting_leaders(min_year, max_year, min_pa=1)
 
 
 @st.cache_data(show_spinner=False)
@@ -865,7 +872,7 @@ Always verify against the actual DraftKings line before placing a pick.
                 key="top_prop",
             )
         with tc2:
-            top_season = st.selectbox("Season", sorted(_SEASONS, reverse=True), key="top_season")
+            top_season = st.selectbox("Season", sorted(_available_seasons(), reverse=True), key="top_season")
         with tc3:
             top_n = st.slider("Players to show", 10, 50, 25, key="top_n")
 
@@ -968,7 +975,7 @@ The actual DraftKings line may differ — always check before betting.
 
         lc1, lc2 = st.columns(2)
         with lc1:
-            l_season = st.selectbox("Season", sorted(_SEASONS, reverse=True), key="leaders_season")
+            l_season = st.selectbox("Season", sorted(_available_seasons(), reverse=True), key="leaders_season")
         with lc2:
             l_top = st.slider("Top N", 10, 50, 20, key="leaders_top")
 
@@ -1031,13 +1038,14 @@ The actual DraftKings line may differ — always check before betting.
         )
 
         ocr_ok   = _ocr_available()
+        seasons = sorted(_available_seasons(), reverse=True)
         season_s = st.selectbox(
             "Season",
-            sorted(_SEASONS, reverse=True),
+            seasons,
             key="shot_season",
             # Default to most recent complete season (prior year) since current
             # season data is unavailable until mid-April at the earliest.
-            index=1 if _CUR_YEAR in _SEASONS and len(_SEASONS) > 1 else 0,
+            index=1 if _CUR_YEAR in seasons and len(seasons) > 1 else 0,
         )
 
         if not ocr_ok:

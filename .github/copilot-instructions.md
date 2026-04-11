@@ -102,6 +102,9 @@ Models are trained with `scikit-learn` pipelines and serialized with `joblib`.
 - `pages/1_Today.py` adds game context factors:
   - Park factor, umpire runs/g, bullpen IP/G, platoon matchup, rest days, day/night win%, IL list
 - `pages/6_Pick_6.py` now provides DK player prop calculator + top scoreboard + season leaders for 6 event categories
+- Added 2026 current-season supplement ingestion and runtime fallback so Team Batting, Team Pitching, Standings, and leaderboards can display early-season MLB Stats API rows before a full rebuild.
+- Added new `src/ingestion/fg_guts.py`, `src/ingestion/fg_park.py`, and `src/ingestion/chadwick.py` plus `scripts/fetch_reference_data.py` for nightly refresh of reference data.
+- Updated `retrosheet.py` to merge supplement parquets for batting, pitching, players, teamstats, and gameinfo.
 
 ## Confidence Tiers
 
