@@ -162,6 +162,13 @@ def _build_todays_features(
 ) -> pd.DataFrame:
     """Merge schedule, odds, and weather into a feature matrix."""
     features = schedule.merge(odds, on=["away_team", "home_team"], how="left")
+    if "game_id" not in features.columns:
+        if "game_id_x" in features.columns:
+            features = features.rename(columns={"game_id_x": "game_id"})
+            if "game_id_y" in features.columns:
+                features = features.drop(columns=["game_id_y"])
+        elif "game_id_y" in features.columns:
+            features = features.rename(columns={"game_id_y": "game_id"})
 
     if not weather.empty:
         weather_cols = [

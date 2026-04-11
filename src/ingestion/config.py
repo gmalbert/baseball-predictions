@@ -15,7 +15,7 @@ class IngestionConfig:
 
     # Date range
     start_year: int = 2020
-    end_year: int = 2025
+    end_year: int = 2026
 
     # Paths
     project_root: Path = field(

@@ -53,6 +53,19 @@ def _extract_year(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series.astype(str).str[:4], errors="coerce")
 
 
+def _read_with_supplement(primary: Path, supplement: Path) -> pd.DataFrame:
+    """Load a parquet file, optionally concat a supplement if it exists."""
+    df = pd.read_parquet(primary)
+    if supplement.exists():
+        supp = pd.read_parquet(supplement)
+        # Cast category columns in the primary back to object so concat works.
+        cat_cols = df.select_dtypes("category").columns.tolist()
+        for col in cat_cols:
+            df[col] = df[col].astype(object)
+        df = pd.concat([df, supp], ignore_index=True)
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Game Info
 # ---------------------------------------------------------------------------
@@ -64,7 +77,7 @@ def load_gameinfo(min_year: int = MODERN_START, max_year: int = datetime.date.to
     Filters to regular-season games within [min_year, max_year].
     """
     min_year = max(min_year, MODERN_START)
-    df = pd.read_parquet(RAW_DIR / "gameinfo.parquet")
+    df = _read_with_supplement(RAW_DIR / "gameinfo.parquet", RAW_DIR / "gameinfo_current.parquet")
     df["season"] = pd.to_numeric(df["season"], errors="coerce")
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
     df["date"] = _parse_retrodate(df["date"])
@@ -97,6 +110,35 @@ _TEAMSTATS_COLS = [
 ]
 
 
+def _teamstats_from_supplements() -> pd.DataFrame:
+    """Aggregate batting_current + pitching_current into team-per-game rows.
+
+    Used when teamstats_current.parquet is absent so load_teamstats can
+    include the current season without a full retrosheet rebuild.
+    """
+    bat_path = RAW_DIR / "batting_current.parquet"
+    if not bat_path.exists():
+        return pd.DataFrame()
+    bat = pd.read_parquet(bat_path)
+    group_keys = [c for c in ["gid", "team", "date", "vishome", "opp", "win", "loss"] if c in bat.columns]
+    agg_cols = {c: (c, "sum") for c in ["b_pa", "b_ab", "b_r", "b_h", "b_d", "b_t", "b_hr",
+                                          "b_rbi", "b_w", "b_k", "b_sb", "b_hbp", "b_sf"] if c in bat.columns}
+    bat_agg = bat.groupby(group_keys, as_index=False).agg(**agg_cols)
+
+    pit_path = RAW_DIR / "pitching_current.parquet"
+    if pit_path.exists():
+        pit = pd.read_parquet(pit_path)
+        pit_agg_cols = {c: (c, "sum") for c in ["p_ipouts", "p_h", "p_hr", "p_r", "p_er",
+                                                  "p_w", "p_k", "p_hbp", "p_wp", "p_bk"] if c in pit.columns}
+        pit_agg = pit.groupby(["gid", "team"], as_index=False).agg(**pit_agg_cols)
+        result = bat_agg.merge(pit_agg, on=["gid", "team"], how="left")
+    else:
+        result = bat_agg
+
+    result["stattype"] = "game"
+    return result
+
+
 @st.cache_data(show_spinner=False)
 def load_teamstats(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     """
@@ -105,7 +147,13 @@ def load_teamstats(min_year: int = MODERN_START, max_year: int = datetime.date.t
     Returns one row per team per game.
     """
     min_year = max(min_year, MODERN_START)
-    df = pd.read_parquet(RAW_DIR / "teamstats.parquet")
+    df = _read_with_supplement(RAW_DIR / "teamstats.parquet", RAW_DIR / "teamstats_current.parquet")
+    # If teamstats_current.parquet hasn't been built yet, fall back to aggregating
+    # from the individual batting/pitching current supplements.
+    if not (RAW_DIR / "teamstats_current.parquet").exists():
+        _cur = _teamstats_from_supplements()
+        if not _cur.empty:
+            df = pd.concat([df, _cur], ignore_index=True)
     cols = [c for c in _TEAMSTATS_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
@@ -162,7 +210,7 @@ _BAT_COLS = [
 @st.cache_data(show_spinner=False)
 def load_batting(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    df = pd.read_parquet(RAW_DIR / "batting.parquet")
+    df = _read_with_supplement(RAW_DIR / "batting.parquet", RAW_DIR / "batting_current.parquet")
     cols = [c for c in _BAT_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
@@ -191,7 +239,7 @@ _PITCH_COLS = [
 @st.cache_data(show_spinner=False)
 def load_pitching(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    df = pd.read_parquet(RAW_DIR / "pitching.parquet")
+    df = _read_with_supplement(RAW_DIR / "pitching.parquet", RAW_DIR / "pitching_current.parquet")
     cols = [c for c in _PITCH_COLS if c in df.columns]
     df["date"] = _parse_retrodate(df["date"])
     df["season"] = _extract_year(df["date"].dt.strftime("%Y%m%d"))
@@ -215,7 +263,7 @@ def load_pitching(min_year: int = MODERN_START, max_year: int = datetime.date.to
 @st.cache_data(show_spinner=False)
 def load_players(min_year: int = MODERN_START, max_year: int = datetime.date.today().year) -> pd.DataFrame:
     min_year = max(min_year, MODERN_START)
-    df = pd.read_parquet(RAW_DIR / "allplayers.parquet")
+    df = _read_with_supplement(RAW_DIR / "allplayers.parquet", RAW_DIR / "allplayers_current.parquet")
     df["season"] = pd.to_numeric(df["season"], errors="coerce")
     df = df[(df["season"] >= min_year) & (df["season"] <= max_year)]
     df["full_name"] = df["first"] + " " + df["last"]
@@ -355,7 +403,7 @@ def rolling_team_form(team: str, window: int = 10, min_year: int = MODERN_START,
 def season_batting_leaders(min_year: int = MODERN_START, max_year: int = datetime.date.today().year, min_pa: int = 300) -> pd.DataFrame:
     """Individual batter season totals, filtered to qualified hitters."""
     bat = load_batting(min_year, max_year)
-    agg = bat.groupby(["season", "id", "team"]).agg(
+    agg = bat.groupby(["season", "id", "team"], observed=False).agg(
         PA=("b_pa", "sum"), AB=("b_ab", "sum"),
         R=("b_r", "sum"), H=("b_h", "sum"),
         doubles=("b_d", "sum"), triples=("b_t", "sum"),
@@ -376,7 +424,7 @@ def season_batting_leaders(min_year: int = MODERN_START, max_year: int = datetim
 def season_pitching_leaders(min_year: int = MODERN_START, max_year: int = datetime.date.today().year, min_ip: float = 100.0) -> pd.DataFrame:
     """Individual pitcher season totals, filtered to qualified starters."""
     pit = load_pitching(min_year, max_year)
-    agg = pit.groupby(["season", "id", "team"]).agg(
+    agg = pit.groupby(["season", "id", "team"], observed=False).agg(
         IPouts=("p_ipouts", "sum"),
         H=("p_h", "sum"), HR=("p_hr", "sum"),
         R=("p_r", "sum"), ER=("p_er", "sum"),

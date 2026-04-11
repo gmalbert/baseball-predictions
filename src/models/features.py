@@ -48,6 +48,13 @@ from src.models.extra_features import (
     sp_vs_opp_features,
     daynight_split_features,
     platoon_features,
+    # New: docs/14 recommendations
+    team_consistency,
+    woba_team_features,
+    fip_sp_features,
+    savant_team_features,
+    savant_sp_features,
+    park_factor_features,
 )
 
 # ---------------------------------------------------------------------------
@@ -68,6 +75,17 @@ _TEAM_FEATURES = [
     "home_SLG", "away_SLG",
     # extra: pythagorean diff (7.1)
     "home_pyth_diff", "away_pyth_diff",
+    # extra: wOBA with year-specific FG weights (priority 1/13)
+    "home_team_wOBA", "away_team_wOBA",
+    # extra: team scoring consistency (priority 4)
+    "home_con_r", "away_con_r", "home_con_ra", "away_con_ra",
+    # extra: Savant team batting quality (priority 3, 7, 11, 12) — optional
+    "home_team_barrel_pct", "away_team_barrel_pct",
+    "home_team_exit_velo",  "away_team_exit_velo",
+    "home_team_sprint_speed", "away_team_sprint_speed",
+    "home_team_oaa",        "away_team_oaa",
+    "home_team_xwoba",      "away_team_xwoba",
+    "home_team_xwoba_diff", "away_team_xwoba_diff",
 ]
 
 _SP_FEATURES = [
@@ -77,6 +95,14 @@ _SP_FEATURES = [
     # extra: SP vs opponent history (2.3) — NaN when < 3 prior starts
     "home_sp_vs_opp_ERA", "away_sp_vs_opp_ERA",
     "home_sp_vs_opp_K9",  "away_sp_vs_opp_K9",
+    # extra: FIP with year-specific cFIP (priority 5)
+    "home_sp_FIP", "away_sp_FIP",
+    # extra: Savant SP quality (priority 3, 8) — optional (NaN when not in CSV)
+    "home_sp_xwoba",         "away_sp_xwoba",
+    "home_sp_wobadiff",      "away_sp_wobadiff",
+    "home_sp_barrel_allowed","away_sp_barrel_allowed",
+    "home_sp_whiff_pct",     "away_sp_whiff_pct",
+    "home_sp_edge_pct",      "away_sp_edge_pct",
 ]
 
 _CONTEXT_FEATURES = [
@@ -111,6 +137,8 @@ _MATCHUP_FEATURES = [
     "home_platoon_adv", "away_platoon_adv", "platoon_adv_gap",
     # extra: matchup K delta (8.2 — derived below)
     "matchup_k_delta",
+    # extra: handedness-split park factors (priority 6)
+    "pf_basic_R", "pf_basic_L", "pf_hr_R", "pf_hr_L",
 ]
 
 _TOTALS_EXTRA = [
@@ -454,6 +482,91 @@ def build_model_features(min_year: int = 2020, max_year: int = _CUR_YEAR) -> pd.
     feat["matchup_k_delta"] = (
         feat["home_K_rate"].fillna(0) - feat["away_K_rate"].fillna(0)
     ).round(4)
+
+    # ── 10. New features from docs/14 recommendations ────────────────────────
+
+    # Priority 4: Team scoring consistency (con_r / con_ra)
+    _con = team_consistency(min_year, max_year)
+    for side, team_col in (("home", "hometeam"), ("away", "visteam")):
+        tmp = _con.rename(columns={
+            "team":   team_col,
+            "con_r":  f"{side}_con_r",
+            "con_ra": f"{side}_con_ra",
+        })
+        feat = feat.merge(tmp, on=["season", team_col], how="left")
+    feat["home_con_r"]  = feat["home_con_r"].fillna(0.5)
+    feat["away_con_r"]  = feat["away_con_r"].fillna(0.5)
+    feat["home_con_ra"] = feat["home_con_ra"].fillna(0.5)
+    feat["away_con_ra"] = feat["away_con_ra"].fillna(0.5)
+
+    # Priority 1/13: Team wOBA with year-specific FG weights
+    _woba = woba_team_features(min_year, max_year)
+    if not _woba.empty:
+        for side, team_col in (("home", "hometeam"), ("away", "visteam")):
+            tmp = _woba.rename(columns={"team": team_col, "team_wOBA": f"{side}_team_wOBA"})
+            feat = feat.merge(tmp, on=["season", team_col], how="left")
+        lg_woba = feat["home_team_wOBA"].median()
+        feat["home_team_wOBA"] = feat["home_team_wOBA"].fillna(lg_woba)
+        feat["away_team_wOBA"] = feat["away_team_wOBA"].fillna(lg_woba)
+
+    # Priority 5: SP FIP with year-specific cFIP constant
+    _fip = fip_sp_features(min_year, max_year)
+    if not _fip.empty:
+        feat = feat.merge(_fip, on="gid", how="left")
+        feat["home_sp_FIP"] = feat["home_sp_FIP"].fillna(feat.get("home_sp_ERA", feat["home_ERA"]))
+        feat["away_sp_FIP"] = feat["away_sp_FIP"].fillna(feat.get("away_sp_ERA", feat["away_ERA"]))
+
+    # Priority 3, 7, 11, 12: Savant team batting quality (optional — no-op if CSV absent)
+    _sv_team = savant_team_features(min_year, max_year)
+    if not _sv_team.empty:
+        for side, team_col in (("home", "hometeam"), ("away", "visteam")):
+            sv_cols = [c for c in _sv_team.columns if c not in ("season", "team")]
+            tmp_rename = {c: f"{side}_{c}" for c in sv_cols}
+            tmp = _sv_team.rename(columns={"team": team_col, **tmp_rename})
+            feat = feat.merge(tmp, on=["season", team_col], how="left")
+        _sv_fill = {
+            "home_team_barrel_pct": 8.0, "away_team_barrel_pct": 8.0,
+            "home_team_exit_velo":  88.5, "away_team_exit_velo":  88.5,
+            "home_team_sprint_speed": 27.0, "away_team_sprint_speed": 27.0,
+            "home_team_oaa": 0.0, "away_team_oaa": 0.0,
+            "home_team_xwoba": 0.320, "away_team_xwoba": 0.320,
+            "home_team_xwoba_diff": 0.0, "away_team_xwoba_diff": 0.0,
+        }
+        for col, default in _sv_fill.items():
+            if col in feat.columns:
+                feat[col] = feat[col].fillna(default)
+
+    # Priority 3, 8: Savant SP quality (optional — no-op if CSV absent)
+    _sv_sp = savant_sp_features(min_year, max_year)
+    if not _sv_sp.empty:
+        feat = feat.merge(_sv_sp, on="gid", how="left")
+        _sp_savant_cols = [
+            "home_sp_xwoba", "away_sp_xwoba",
+            "home_sp_wobadiff", "away_sp_wobadiff",
+            "home_sp_barrel_allowed", "away_sp_barrel_allowed",
+            "home_sp_whiff_pct", "away_sp_whiff_pct",
+            "home_sp_edge_pct", "away_sp_edge_pct",
+        ]
+        _sp_savant_fill = {
+            "home_sp_xwoba": 0.320, "away_sp_xwoba": 0.320,
+            "home_sp_wobadiff": 0.0, "away_sp_wobadiff": 0.0,
+            "home_sp_barrel_allowed": 8.0, "away_sp_barrel_allowed": 8.0,
+            "home_sp_whiff_pct": 24.0, "away_sp_whiff_pct": 24.0,
+            "home_sp_edge_pct": 43.0, "away_sp_edge_pct": 43.0,
+        }
+        for col, default in _sp_savant_fill.items():
+            if col in feat.columns:
+                feat[col] = feat[col].fillna(default)
+
+    # Priority 6: Handedness-split park factors
+    _pf = park_factor_features(min_year, max_year)
+    if not _pf.empty:
+        feat = feat.merge(_pf, on="gid", how="left")
+    for pf_col in ("pf_basic_R", "pf_basic_L", "pf_hr_R", "pf_hr_L"):
+        if pf_col not in feat.columns:
+            feat[pf_col] = 100.0
+        else:
+            feat[pf_col] = feat[pf_col].fillna(100.0)
 
     return feat.reset_index(drop=True)
 

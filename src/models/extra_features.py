@@ -730,6 +730,458 @@ def platoon_features(min_year: int, max_year: int) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Helpers for Savant-based features (docs/14 priorities 3, 5, 7, 8, 11, 12, 13)
+# ---------------------------------------------------------------------------
+
+_RAW_DIR = Path(__file__).resolve().parents[2] / "data_files" / "raw"
+
+
+def _load_savant_batter_csv(min_year: int, max_year: int) -> pd.DataFrame:
+    """Load the raw Savant batter CSV(s) for the requested year range."""
+    csv_files = sorted((_RAW_DIR / "batting").glob("savant_batter_*.csv"))
+    if not csv_files:
+        return pd.DataFrame()
+    frames = []
+    for f in csv_files:
+        try:
+            df = pd.read_csv(f, low_memory=False)
+            df["year"] = pd.to_numeric(df.get("year"), errors="coerce")
+            df = df[(df["year"] >= min_year) & (df["year"] <= max_year)]
+            frames.append(df)
+        except Exception:  # noqa: BLE001
+            pass
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _load_savant_pitcher_csv(min_year: int, max_year: int) -> pd.DataFrame:
+    """Load the raw Savant pitcher CSV(s) for the requested year range."""
+    csv_files = sorted((_RAW_DIR / "pitching").glob("savant_pitcher_*.csv"))
+    if not csv_files:
+        return pd.DataFrame()
+    frames = []
+    for f in csv_files:
+        try:
+            df = pd.read_csv(f, low_memory=False)
+            df["year"] = pd.to_numeric(df.get("year"), errors="coerce")
+            df = df[(df["year"] >= min_year) & (df["year"] <= max_year)]
+            frames.append(df)
+        except Exception:  # noqa: BLE001
+            pass
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _build_savant_batter_team_agg(min_year: int, max_year: int) -> pd.DataFrame:
+    """Aggregate Savant batter stats to (season, team) via Chadwick cross-reference.
+
+    Uses retrosheet batting rows (which have the Retrosheet player ID and team) to
+    anchor which players belong to each team, then joins the Savant player_id through
+    the Chadwick Bureau registry.
+
+    Returns DataFrame with columns:
+        season, team, team_barrel_pct, team_exit_velo, team_sprint_speed,
+        team_oaa, team_xwoba, team_xwoba_diff
+    """
+    sv = _load_savant_batter_csv(min_year, max_year)
+    if sv.empty:
+        return pd.DataFrame()
+
+    needed_sv = ["player_id", "year", "barrel_batted_rate", "exit_velocity_avg",
+                 "sprint_speed", "n_outs_above_average", "xwoba", "wobadiff"]
+    sv = sv[[c for c in needed_sv if c in sv.columns]].copy()
+    sv["player_id"] = pd.to_numeric(sv["player_id"], errors="coerce")
+
+    # Retrosheet batting: gid, id (retro ID), team, date
+    bat = pd.read_parquet(_RETRO / "batting.parquet",
+                          columns=["id", "team", "date"] if True else None)
+    bat = bat[["id", "team", "date"]].copy()
+    bat["season"] = pd.to_numeric(bat["date"].astype(str).str[:4], errors="coerce")
+    bat = bat[(bat["season"] >= min_year) & (bat["season"] <= max_year)]
+    bat = bat[["id", "team", "season"]].drop_duplicates()
+
+    # Chadwick: retro_id → mlbam player_id
+    try:
+        from src.ingestion.chadwick import load_player_registry
+        registry = load_player_registry()
+        id_map = (
+            registry[["key_retro", "key_mlbam"]]
+            .dropna(subset=["key_retro", "key_mlbam"])
+            .copy()
+        )
+        id_map["key_mlbam"] = pd.to_numeric(id_map["key_mlbam"], errors="coerce")
+        id_map = id_map.dropna(subset=["key_mlbam"])
+        id_map["key_mlbam"] = id_map["key_mlbam"].astype(int)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+    # Join Retrosheet players → MLBAM IDs
+    bat = bat.merge(
+        id_map.rename(columns={"key_retro": "id", "key_mlbam": "player_id"}),
+        on="id", how="inner",
+    )
+
+    # Join Savant stats
+    merged = bat.merge(
+        sv, left_on=["player_id", "season"], right_on=["player_id", "year"], how="inner"
+    )
+    if merged.empty:
+        return pd.DataFrame()
+
+    # Aggregate to (season, team) — mean per player who qualified that year
+    agg_dict: dict[str, tuple] = {}
+    for col, out_col in [
+        ("barrel_batted_rate", "team_barrel_pct"),
+        ("exit_velocity_avg",  "team_exit_velo"),
+        ("sprint_speed",       "team_sprint_speed"),
+        ("xwoba",              "team_xwoba"),
+        ("wobadiff",           "team_xwoba_diff"),
+    ]:
+        if col in merged.columns:
+            agg_dict[out_col] = (col, "mean")
+    if "n_outs_above_average" in merged.columns:
+        agg_dict["team_oaa"] = ("n_outs_above_average", "sum")
+
+    agg = merged.groupby(["season", "team"]).agg(**agg_dict).reset_index()
+    team_map = {k: _code_to_name(k) for k in agg["team"].unique()}
+    agg["team"] = agg["team"].map(team_map).fillna(agg["team"])
+    return agg.round(3)
+
+
+def _build_savant_sp_agg(min_year: int, max_year: int) -> pd.DataFrame:
+    """Aggregate Savant pitcher stats to (season, id_retro) via Chadwick join.
+
+    Returns DataFrame with columns:
+        season, id (retrosheet pitcher ID), sp_xwoba, sp_wobadiff,
+        sp_barrel_allowed, sp_whiff_pct, sp_edge_pct
+    """
+    sp = _load_savant_pitcher_csv(min_year, max_year)
+    if sp.empty:
+        return pd.DataFrame()
+
+    needed_sp = ["player_id", "year", "xwoba", "wobadiff", "barrel_batted_rate",
+                 "whiff_percent", "edge_percent"]
+    sp = sp[[c for c in needed_sp if c in sp.columns]].copy()
+    sp["player_id"] = pd.to_numeric(sp["player_id"], errors="coerce")
+
+    try:
+        from src.ingestion.chadwick import load_player_registry
+        registry = load_player_registry()
+        id_map = (
+            registry[["key_retro", "key_mlbam"]]
+            .dropna(subset=["key_retro", "key_mlbam"])
+            .copy()
+        )
+        id_map["key_mlbam"] = pd.to_numeric(id_map["key_mlbam"], errors="coerce").astype(int)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+    sp = sp.merge(
+        id_map.rename(columns={"key_mlbam": "player_id", "key_retro": "id"}),
+        on="player_id", how="inner",
+    )
+    sp = sp.rename(columns={
+        "year":                "season",
+        "xwoba":               "sp_xwoba",
+        "wobadiff":            "sp_wobadiff",
+        "barrel_batted_rate":  "sp_barrel_allowed",
+        "whiff_percent":       "sp_whiff_pct",
+        "edge_percent":        "sp_edge_pct",
+    })
+    keep = ["id", "season"] + [c for c in ["sp_xwoba", "sp_wobadiff",
+            "sp_barrel_allowed", "sp_whiff_pct", "sp_edge_pct"] if c in sp.columns]
+    return sp[keep].drop_duplicates(subset=["id", "season"])
+
+
+# ---------------------------------------------------------------------------
+# Priority 4 — Team Scoring Consistency (baseballr: team_consistency)
+# ---------------------------------------------------------------------------
+
+def team_consistency(min_year: int, max_year: int) -> pd.DataFrame:
+    """Proportion of games where each team scores above / allows below median.
+
+    ``con_r``  = fraction of games where team scored > season median scored
+    ``con_ra`` = fraction of games where team allowed < season median allowed
+
+    High con_r + high con_ra → reliable scoring environment (better for unders).
+    Low con_r → boom-or-bust offense (wider run distribution).
+
+    Returns: season, team, con_r, con_ra
+    """
+    gi = _load_gameinfo_csv(min_year, max_year)
+    gi["vruns"] = pd.to_numeric(gi["vruns"], errors="coerce")
+    gi["hruns"] = pd.to_numeric(gi["hruns"], errors="coerce")
+    gi = gi.dropna(subset=["vruns", "hruns"])
+
+    # Stack home and away into one long table: (season, team, scored, allowed)
+    home = gi[["season", "hometeam", "hruns", "vruns"]].rename(
+        columns={"hometeam": "team", "hruns": "scored", "vruns": "allowed"}
+    )
+    away = gi[["season", "visteam", "vruns", "hruns"]].rename(
+        columns={"visteam": "team", "vruns": "scored", "hruns": "allowed"}
+    )
+    df = pd.concat([home, away], ignore_index=True)
+
+    # Season-level medians
+    season_med = df.groupby("season").agg(
+        med_scored=("scored", "median"),
+        med_allowed=("allowed", "median"),
+    )
+    df = df.merge(season_med, on="season", how="left")
+
+    agg = (
+        df.groupby(["season", "team"])
+        .apply(lambda g: pd.Series({
+            "con_r":  (g["scored"]  > g["med_scored"].iloc[0]).mean(),
+            "con_ra": (g["allowed"] < g["med_allowed"].iloc[0]).mean(),
+        }))
+        .reset_index()
+    )
+    agg["team"] = agg["team"].map(_code_to_name).fillna(agg["team"])
+    return agg[["season", "team", "con_r", "con_ra"]].round(3)
+
+
+# ---------------------------------------------------------------------------
+# Priority 1/13 — wOBA (year-specific FanGraphs weights) per team season
+# ---------------------------------------------------------------------------
+
+def woba_team_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Season wOBA per team using FanGraphs Guts! linear weights.
+
+    More accurate than OPS as a per-PA offensive value metric; weights for
+    singles, doubles, etc. are era-calibrated rather than hardcoded.
+
+    Returns: season, team, team_wOBA
+    """
+    try:
+        from src.ingestion.fg_guts import load_fg_guts
+        guts = load_fg_guts()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+    bat = pd.read_parquet(_RETRO / "batting.parquet")
+    bat["season"] = pd.to_numeric(bat["date"].astype(str).str[:4], errors="coerce")
+    bat = bat[(bat["season"] >= min_year) & (bat["season"] <= max_year)].copy()
+
+    for col in ("b_ab", "b_h", "b_d", "b_t", "b_hr", "b_sf",
+                "b_hbp", "b_w", "b_k"):
+        bat[col] = pd.to_numeric(bat[col], errors="coerce").fillna(0)
+
+    bat["b_1b"] = bat["b_h"] - bat["b_d"] - bat["b_t"] - bat["b_hr"]
+
+    # Aggregate to (season, team)
+    grp = bat.groupby(["season", "team"]).agg(
+        AB =("b_ab",  "sum"),
+        BB =("b_w",   "sum"),
+        HBP=("b_hbp", "sum"),
+        H1B=("b_1b",  "sum"),
+        H2B=("b_d",   "sum"),
+        H3B=("b_t",   "sum"),
+        HR =("b_hr",  "sum"),
+        SF =("b_sf",  "sum"),
+    ).reset_index()
+
+    results = []
+    for season, season_df in grp.groupby("season"):
+        row = guts[guts["season"] == season]
+        if row.empty:
+            row = guts[guts["season"] <= season].sort_values("season").iloc[[-1]]
+        w = row.iloc[0]
+        denom = (season_df["AB"] + season_df["BB"] + season_df["SF"] + season_df["HBP"]).clip(lower=1)
+        season_df["team_wOBA"] = (
+            w["wBB"]  * season_df["BB"]
+            + w["wHBP"] * season_df["HBP"]
+            + w["w1B"]  * season_df["H1B"]
+            + w["w2B"]  * season_df["H2B"]
+            + w["w3B"]  * season_df["H3B"]
+            + w["wHR"]  * season_df["HR"]
+        ) / denom
+        results.append(season_df)
+
+    out = pd.concat(results, ignore_index=True)
+    out["team"] = out["team"].map(_code_to_name).fillna(out["team"])
+    return out[["season", "team", "team_wOBA"]].round(4)
+
+
+# ---------------------------------------------------------------------------
+# Priority 5 — FIP for Starting Pitchers (year-specific cFIP constant)
+# ---------------------------------------------------------------------------
+
+def fip_sp_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Season FIP for each starting pitcher, using the year's cFIP constant.
+
+    FIP outperforms ERA as a predictor of future performance because it strips
+    out defensive luck and batted-ball variation.
+
+    Returns: gid, home_sp_FIP, away_sp_FIP
+    """
+    try:
+        from src.ingestion.fg_guts import load_fg_guts
+        guts = load_fg_guts()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+    p = pd.read_parquet(_RETRO / "pitching.parquet")
+    p["season"] = pd.to_numeric(p["date"].astype(str).str[:4], errors="coerce")
+    p = p[(p["season"] >= min_year) & (p["season"] <= max_year)
+          & (p["p_gs"] == 1.0)].copy()
+    for col in ("p_ipouts", "p_hr", "p_w", "p_iw", "p_k", "p_hbp"):
+        p[col] = pd.to_numeric(p[col], errors="coerce").fillna(0)
+    p["ip"] = p["p_ipouts"] / 3
+    p["uBB"] = (p["p_w"] - p["p_iw"]).clip(lower=0)
+
+    # Season aggregates per pitcher
+    sp_agg = p.groupby(["season", "id"]).agg(
+        total_ip=("ip",    "sum"),
+        total_hr=("p_hr",  "sum"),
+        total_bb=("uBB",   "sum"),
+        total_hbp=("p_hbp","sum"),
+        total_k=("p_k",    "sum"),
+    ).reset_index()
+
+    results = []
+    for season, season_df in sp_agg.groupby("season"):
+        row = guts[guts["season"] == season]
+        if row.empty:
+            row = guts[guts["season"] <= season].sort_values("season").iloc[[-1]]
+        c_fip = float(row["cFIP"].iloc[0])
+        ip_s = season_df["total_ip"].clip(lower=0.1)
+        season_df["sp_FIP"] = (
+            (13 * season_df["total_hr"]
+             + 3 * (season_df["total_bb"] + season_df["total_hbp"])
+             - 2 * season_df["total_k"]) / ip_s + c_fip
+        ).round(2)
+        results.append(season_df)
+
+    sp_agg = pd.concat(results, ignore_index=True)
+
+    # Merge back to game-starter rows
+    p = p.merge(sp_agg[["season", "id", "sp_FIP"]], on=["season", "id"], how="left")
+
+    home = (
+        p[p["vishome"] == "h"][["gid", "sp_FIP"]]
+        .rename(columns={"sp_FIP": "home_sp_FIP"})
+        .drop_duplicates("gid")
+    )
+    away = (
+        p[p["vishome"] == "v"][["gid", "sp_FIP"]]
+        .rename(columns={"sp_FIP": "away_sp_FIP"})
+        .drop_duplicates("gid")
+    )
+    return home.merge(away, on="gid", how="outer").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Priority 3, 7, 11, 12 — Savant team-level features via Chadwick
+# ---------------------------------------------------------------------------
+
+def savant_team_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Savant-derived team batting quality metrics (season level).
+
+    Requires:
+      - data_files/raw/batting/savant_batter_*.csv
+      - data_files/processed/player_registry.parquet (Chadwick)
+      - data_files/retrosheet/batting.parquet
+
+    Returns DataFrame with columns (all optional — absent if Savant CSV missing):
+        season, team,
+        team_barrel_pct, team_exit_velo, team_sprint_speed, team_oaa,
+        team_xwoba, team_xwoba_diff
+    """
+    return _build_savant_batter_team_agg(min_year, max_year)
+
+
+def savant_sp_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Savant-derived SP quality metrics joined to each game's starter row.
+
+    Returns: gid, home_sp_xwoba, home_sp_wobadiff, home_sp_barrel_allowed,
+                  home_sp_whiff_pct, home_sp_edge_pct,
+                  away_sp_xwoba, away_sp_wobadiff, away_sp_barrel_allowed,
+                  away_sp_whiff_pct, away_sp_edge_pct
+    """
+    sp_stats = _build_savant_sp_agg(min_year, max_year)
+    if sp_stats.empty:
+        return pd.DataFrame()
+
+    # Starter rows from retrosheet (game-level)
+    p = pd.read_parquet(_RETRO / "pitching.parquet")
+    p["season"] = pd.to_numeric(p["date"].astype(str).str[:4], errors="coerce")
+    p = p[(p["season"] >= min_year) & (p["season"] <= max_year)
+          & (p["p_gs"] == 1.0)].copy()
+    p = p.merge(sp_stats, on=["id", "season"], how="left")
+
+    sp_cols = [c for c in ["sp_xwoba", "sp_wobadiff", "sp_barrel_allowed",
+                            "sp_whiff_pct", "sp_edge_pct"] if c in p.columns]
+    if not sp_cols:
+        return pd.DataFrame()
+
+    home = (
+        p[p["vishome"] == "h"][["gid"] + sp_cols]
+        .rename(columns={c: f"home_{c}" for c in sp_cols})
+        .drop_duplicates("gid")
+    )
+    away = (
+        p[p["vishome"] == "v"][["gid"] + sp_cols]
+        .rename(columns={c: f"away_{c}" for c in sp_cols})
+        .drop_duplicates("gid")
+    )
+    return home.merge(away, on="gid", how="outer").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Priority 6 — Handedness-split park factors (FanGraphs)
+# ---------------------------------------------------------------------------
+
+def park_factor_features(min_year: int, max_year: int) -> pd.DataFrame:
+    """Handedness-split park factors for each game (home team's stadium).
+
+    Fetches FanGraphs park factors if not cached.  Falls back to pf_basic=100
+    (neutral) when the API is unavailable.
+
+    Returns: gid, pf_basic_R, pf_basic_L, pf_hr_R, pf_hr_L
+    """
+    try:
+        from src.ingestion.fg_park import load_fg_park_factors
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+    gi = _load_gameinfo_csv(min_year, max_year)
+
+    rows = []
+    for year in range(min_year, max_year + 1):
+        year_gi = gi[gi["season"] == year][["gid", "hometeam"]].copy()
+        if year_gi.empty:
+            continue
+        try:
+            pf = load_fg_park_factors(year)
+        except Exception:  # noqa: BLE001
+            pf = pd.DataFrame()
+
+        for hand in ("R", "L"):
+            hand_pf = pf[pf.get("hand", pd.Series(dtype=str)) == hand] if not pf.empty else pd.DataFrame()
+            for col_out, col_src in [
+                (f"pf_basic_{hand}", "pf_basic"),
+                (f"pf_hr_{hand}",    "pf_hr"),
+            ]:
+                if not hand_pf.empty and col_src in hand_pf.columns:
+                    # Map team abbreviation to retrosheet code — best-effort
+                    year_gi[col_out] = 100.0  # default neutral
+                    if "team_abbrev" in hand_pf.columns:
+                        abbrev_map = dict(zip(hand_pf["team_abbrev"], hand_pf[col_src]))
+                        year_gi[col_out] = year_gi["hometeam"].map(abbrev_map).fillna(100.0)
+                else:
+                    year_gi[col_out] = 100.0
+
+        rows.append(year_gi)
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.concat(rows, ignore_index=True)
+    keep = ["gid"] + [c for c in ["pf_basic_R", "pf_basic_L", "pf_hr_R", "pf_hr_L"]
+                      if c in result.columns]
+    return result[keep].drop_duplicates("gid").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Quick smoke test
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -749,6 +1201,13 @@ if __name__ == "__main__":
         ("sp_vs_opp",        lambda: sp_vs_opp_features(2024, 2025)),
         ("daynight_splits",  lambda: daynight_split_features(2024, 2025)),
         ("platoon",          lambda: platoon_features(2024, 2025)),
+        # New functions
+        ("team_consistency", lambda: team_consistency(2024, 2025)),
+        ("woba_team",        lambda: woba_team_features(2024, 2025)),
+        ("fip_sp",           lambda: fip_sp_features(2024, 2025)),
+        ("savant_team",      lambda: savant_team_features(2024, 2025)),
+        ("savant_sp",        lambda: savant_sp_features(2024, 2025)),
+        ("park_factors",     lambda: park_factor_features(2024, 2025)),
     ]:
         df = fn()
         print(f"{name:20s}  shape={df.shape}  cols={list(df.columns)}")

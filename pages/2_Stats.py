@@ -1,5 +1,6 @@
 """Page: Stats — Standings · Team Batting · Team Pitching · Batting Leaders · Pitching Leaders"""
 import sys
+import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -13,6 +14,42 @@ from page_utils import (
     render_sidebar,
     add_betting_oracle_footer,
 )
+from retrosheet import (
+    season_batting_leaders,
+    season_pitching_leaders,
+    season_team_batting,
+    season_team_pitching,
+    season_standings,
+)
+
+_CUR_YEAR = datetime.date.today().year
+
+
+@st.cache_data(show_spinner=False)
+def _live_batting_leaders(year: int) -> pd.DataFrame:
+    """Live current-year batting leaders with a low PA floor (no 300-PA qualifier)."""
+    return season_batting_leaders(year, year, min_pa=1)
+
+
+@st.cache_data(show_spinner=False)
+def _live_pitching_leaders(year: int) -> pd.DataFrame:
+    """Live current-year pitching leaders with a low IP floor."""
+    return season_pitching_leaders(year, year, min_ip=1)
+
+
+@st.cache_data(show_spinner=False)
+def _live_standings(year: int) -> pd.DataFrame:
+    return season_standings(year, year)
+
+
+@st.cache_data(show_spinner=False)
+def _live_team_batting(year: int) -> pd.DataFrame:
+    return season_team_batting(year, year)
+
+
+@st.cache_data(show_spinner=False)
+def _live_team_pitching(year: int) -> pd.DataFrame:
+    return season_team_pitching(year, year)
 
 def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
     """
@@ -47,6 +84,18 @@ tbat      = _pre["team_batting"][_pre["team_batting"]["season"].between(min_year
 tpitch    = _pre["team_pitching"][_pre["team_pitching"]["season"].between(min_year, max_year)].copy()
 bleaders  = _pre["batting_leaders"][_pre["batting_leaders"]["season"].between(min_year, max_year)].copy()
 pleaders  = _pre["pitching_leaders"][_pre["pitching_leaders"]["season"].between(min_year, max_year)].copy()
+
+# Merge in live current-year data when the precomputed parquets don't include it.
+if max_year >= _CUR_YEAR and _CUR_YEAR not in standings["season"].values:
+    standings = pd.concat([standings, _live_standings(_CUR_YEAR)], ignore_index=True)
+if max_year >= _CUR_YEAR and _CUR_YEAR not in tbat["season"].values:
+    tbat = pd.concat([tbat, _live_team_batting(_CUR_YEAR)], ignore_index=True)
+if max_year >= _CUR_YEAR and _CUR_YEAR not in tpitch["season"].values:
+    tpitch = pd.concat([tpitch, _live_team_pitching(_CUR_YEAR)], ignore_index=True)
+if max_year >= _CUR_YEAR and _CUR_YEAR not in bleaders["season"].values:
+    bleaders = pd.concat([bleaders, _live_batting_leaders(_CUR_YEAR)], ignore_index=True)
+if max_year >= _CUR_YEAR and _CUR_YEAR not in pleaders["season"].values:
+    pleaders = pd.concat([pleaders, _live_pitching_leaders(_CUR_YEAR)], ignore_index=True)
 
 tab_stnd, tab_tbat, tab_tpitch, tab_bleaders, tab_pleaders = st.tabs([
     "Standings", "Team Batting", "Team Pitching", "Batting Leaders", "Pitching Leaders",
