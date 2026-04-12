@@ -54,6 +54,7 @@ def train_spread_model(
     Returns:
         dict with keys: model, metrics, importances, feature_cols, test_df.
     """
+    feature_cols = [c for c in feature_cols if c in features_df.columns]
     df = features_df.sort_values("date").dropna(
         subset=["home_cover"] + feature_cols
     )

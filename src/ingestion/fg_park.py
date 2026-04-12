@@ -78,6 +78,11 @@ def fetch_fg_park_factors(year: int, save: bool = True) -> pd.DataFrame:
         both API calls fail.
     """
     results: list[dict] = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.fangraphs.com/",
+        "Accept": "application/json, text/plain, */*",
+    }
     for hand in ("L", "R"):
         params = {
             "startseason": year,
@@ -86,7 +91,7 @@ def fetch_fg_park_factors(year: int, save: bool = True) -> pd.DataFrame:
             "hand": hand,
         }
         try:
-            resp = requests.get(_FG_PARK_URL, params=params, timeout=30)
+            resp = requests.get(_FG_PARK_URL, params=params, headers=headers, timeout=30)
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):

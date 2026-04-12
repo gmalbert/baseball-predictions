@@ -58,6 +58,7 @@ def train_moneyline_model(
         dict with keys: model, metrics, importances, feature_cols,
                         test_df (actual vs predicted for the test set).
     """
+    feature_cols = [c for c in feature_cols if c in features_df.columns]
     df = features_df.sort_values("date").dropna(
         subset=["home_win"] + feature_cols
     )
