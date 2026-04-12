@@ -983,7 +983,10 @@ def woba_team_features(min_year: int, max_year: int) -> pd.DataFrame:
     for season, season_df in grp.groupby("season"):
         row = guts[guts["season"] == season]
         if row.empty:
-            row = guts[guts["season"] <= season].sort_values("season").iloc[[-1]]
+            past = guts[guts["season"] <= season]
+            row = past.sort_values("season").iloc[[-1]] if not past.empty else guts.sort_values("season").iloc[[0]]
+        if row.empty:
+            continue
         w = row.iloc[0]
         denom = (season_df["AB"] + season_df["BB"] + season_df["SF"] + season_df["HBP"]).clip(lower=1)
         season_df["team_wOBA"] = (
@@ -1041,7 +1044,10 @@ def fip_sp_features(min_year: int, max_year: int) -> pd.DataFrame:
     for season, season_df in sp_agg.groupby("season"):
         row = guts[guts["season"] == season]
         if row.empty:
-            row = guts[guts["season"] <= season].sort_values("season").iloc[[-1]]
+            past = guts[guts["season"] <= season]
+            row = past.sort_values("season").iloc[[-1]] if not past.empty else guts.sort_values("season").iloc[[0]]
+        if row.empty:
+            continue
         c_fip = float(row["cFIP"].iloc[0])
         ip_s = season_df["total_ip"].clip(lower=0.1)
         season_df["sp_FIP"] = (
