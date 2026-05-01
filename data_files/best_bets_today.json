@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "sport": "MLB",
+    "generated_at": "2026-04-30T02:04:41.664581+00:00",
+    "model_version": "1.0.0",
+    "season": "2026"
+  },
+  "bets": [
+    {
+      "game_date": "2026-04-29",
+      "game_time": "7:05 PM ET",
+      "game": "BOS @ NYY",
+      "home_team": "NYY",
+      "away_team": "BOS",
+      "bet_type": "Moneyline",
+      "pick": "NYY",
+      "confidence": 0.65,
+      "edge": 0.09,
+      "tier": "Elite",
+      "odds": -140,
+      "line": NaN,
+      "notes": "SP advantage"
+    },
+    {
+      "game_date": "2026-04-29",
+      "game_time": "9:40 PM ET",
+      "game": "SFG @ LAD",
+      "home_team": "LAD",
+      "away_team": "SFG",
+      "bet_type": "Spread",
+      "pick": "LAD",
+      "confidence": 0.58,
+      "edge": 0.04,
+      "tier": "Good",
+      "odds": -115,
+      "line": -1.5,
+      "notes": "None"
+    }
+  ]
+}
