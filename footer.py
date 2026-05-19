@@ -10,7 +10,8 @@ FOOTER_HTML = """
         Powered by <a href="https://www.betting-oracle.com" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: bold;">Betting Oracle</a>
     </p>
     <p style="margin: 0 0 15px 0; font-size: 12px; color: #888; font-family: sans-serif;">
-        Sports Prediction Analytics
+        Sports Prediction Analytics<br>
+        All content is for informational purposes only and does not constitute betting advice. Wager responsibly.
     </p>
     <a href="https://www.betting-oracle.com" target="_blank">
         <img src="https://raw.githubusercontent.com/gmalbert/betting-oracle/main/data_files/logo.png"

@@ -722,7 +722,7 @@ else:
                     if st.button(
                         "View Details →",
                         key=f"sched_detail_{idx}",
-                        use_container_width=True,
+                        width='stretch',
                     ):
                         st.session_state["schedule_selected_game"] = g
                         st.rerun()

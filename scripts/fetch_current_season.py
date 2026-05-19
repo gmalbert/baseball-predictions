@@ -20,6 +20,7 @@ import datetime
 import time
 from pathlib import Path
 
+import requests
 import pandas as pd
 import statsapi
 
@@ -72,6 +73,29 @@ OPENING_DAYS: dict[int, str] = {
     2023: "2023-03-30",
 }
 
+# ---------------------------------------------------------------------------
+# Retry wrapper
+# ---------------------------------------------------------------------------
+
+def _statsapi_retry(fn, *args, max_retries: int = 5, base_delay: float = 5.0, **kwargs):
+    """Call fn(*args, **kwargs) with exponential-backoff retry on transient errors."""
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except (
+            requests.exceptions.HTTPError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait = base_delay * (2 ** attempt)
+            print(
+                f"MLB API transient error ({exc}); "
+                f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_retries})..."
+            )
+            time.sleep(wait)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +103,7 @@ OPENING_DAYS: dict[int, str] = {
 
 def _build_team_map(season: int) -> dict[int, str]:
     """Return {mlbam_team_id: retrosheet_3_letter_code}."""
-    teams = statsapi.get("teams", {"sportId": 1, "season": season})["teams"]
+    teams = _statsapi_retry(statsapi.get, "teams", {"sportId": 1, "season": season})["teams"]
     return {
         t["id"]: ABBREV_TO_RETRO.get(t.get("abbreviation", ""), t.get("abbreviation", "UNK"))
         for t in teams
@@ -119,7 +143,7 @@ def _last_word(s: str | None) -> str:
 def _fetch_schedule(season: int, season_start: str) -> list[dict]:
     """Return all completed regular-season games from Opening Day through today."""
     today = datetime.date.today().isoformat()
-    raw = statsapi.schedule(start_date=season_start, end_date=today, sportId=1)
+    raw = _statsapi_retry(statsapi.schedule, start_date=season_start, end_date=today, sportId=1)
     completed = [
         g for g in raw
         if g.get("game_type") == "R"
@@ -155,7 +179,7 @@ def _process_game(
     away_win   = 1 if away_score > home_score else 0
 
     try:
-        bs = statsapi.boxscore_data(game_pk)
+        bs = _statsapi_retry(statsapi.boxscore_data, game_pk)
     except Exception as exc:
         print(f"  Warning: boxscore_data({game_pk}) failed — {exc}")
         return [], []
@@ -344,7 +368,7 @@ def _build_allplayers(
         batch   = all_ids[i : i + 50]
         ids_str = ",".join(str(x) for x in batch)
         try:
-            result = statsapi.get("people", {"personIds": ids_str})
+            result = _statsapi_retry(statsapi.get, "people", {"personIds": ids_str})
             for person in result.get("people", []):
                 rows.append(
                     {

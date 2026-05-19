@@ -485,7 +485,7 @@ def home_page() -> None:
                 if st.button(
                     "🔍 View Full Game Details →",
                     key=f"home_detail_{idx}",
-                    use_container_width=True,
+                    width='stretch',
                 ):
                     st.session_state["schedule_selected_game"] = g
                     st.switch_page("pages/1_Today.py")
