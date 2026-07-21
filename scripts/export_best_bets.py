@@ -4,6 +4,7 @@ Reads data_files/processed/picks_today.parquet (written by src/picks/daily_pipel
 and writes data_files/best_bets_today.json in the unified Sports Picks Grid schema.
 """
 import json
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -14,13 +15,20 @@ OUT_PATH = Path("data_files/best_bets_today.json")
 SRC_PATH = Path("data_files/processed/picks_today.parquet")
 
 
-def _write(bets: list, notes: str = "") -> None:
+def _write(bets: list, notes: str = "", status: str | None = None) -> None:
+    if status is None:
+        status = "ok" if bets else "no_picks"
     payload: dict = {
         "meta": {
             "sport": SPORT,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "model_version": MODEL_VERSION,
             "season": SEASON,
+            "status": status,
+            "tier_definition": "edge-v1",
+            "lookahead_days": 0,
+            "source_commit": os.getenv("GITHUB_SHA", ""),
+            "total_bets": len(bets),
         },
         "bets": bets,
     }
@@ -54,18 +62,18 @@ def main() -> None:
     # Baseball season: March–November
     month = today.month
     if not (3 <= month <= 11):
-        _write([], "MLB off-season")
+        _write([], "MLB off-season", "off_season")
         return
 
     if not SRC_PATH.exists():
-        _write([], f"picks_today.parquet not found — daily pipeline may not have run yet")
+        _write([], "picks_today.parquet not found — daily pipeline may not have run yet", "pipeline_pending")
         return
 
     try:
         import pandas as pd
         df = pd.read_parquet(SRC_PATH)
     except Exception as e:
-        _write([], f"Failed to read {SRC_PATH}: {e}")
+        _write([], f"Failed to read {SRC_PATH}: {e}", "pipeline_failed")
         return
 
     if df.empty:
