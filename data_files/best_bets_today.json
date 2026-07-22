@@ -1,9 +1,14 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-07-21T12:41:25.754232+00:00",
+    "generated_at": "2026-07-22T12:43:07.383597+00:00",
     "model_version": "1.0.0",
     "season": "2026",
+    "status": "pipeline_pending",
+    "tier_definition": "edge-v1",
+    "lookahead_days": 0,
+    "source_commit": "5e259991ede1936cf2ac91072fd9b2edc1a8b013",
+    "total_bets": 0,
     "notes": "picks_today.parquet not found — daily pipeline may not have run yet"
   },
   "bets": []
