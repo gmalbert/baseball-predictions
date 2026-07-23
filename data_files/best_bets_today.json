@@ -1,10 +1,10 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-07-23T01:15:28.763784+00:00",
+    "generated_at": "2026-07-23T03:00:39.735422+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "notes": "KeyError: \"None of [Index(['home_WPct', 'away_WPct', 'WPct_diff', 'home_PythWPct', 'away_PythWPct',\\n       'PythWPct_diff', 'home_RS_G', 'home_RA_G', 'away_RS_G', 'away_RA_G',\\n       ...\\n       'home_pen_arms_3d', 'away_pen_arms_3d', 'home_platoon_adv',\\n       'away_platoon_adv', 'platoon_adv_gap', 'matchup_k_delta', 'pf_basic_R',\\n       'pf_basic_L', 'pf_hr_R', 'pf_hr_L'],\\n      dtype='str', length=121)] are in the [columns]\"",
+    "notes": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
     "status": "pipeline_failed",
     "target_date": "2026-07-23",
     "picks_count": 0
