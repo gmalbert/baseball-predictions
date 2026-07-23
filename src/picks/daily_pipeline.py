@@ -15,6 +15,8 @@ job can compare lines and detect significant movement.
 from __future__ import annotations
 
 import logging
+import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -32,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data_files" / "processed"
+PICKS_TODAY_PATH = PROCESSED_DIR / "picks_today.csv"
+PICKS_METADATA_PATH = PROCESSED_DIR / "picks_today.meta.json"
+PICK_COLUMNS = [
+    "game_id", "away_team", "home_team", "pick_type", "pick_value",
+    "predicted_prob", "confidence_score", "edge", "game_date", "source",
+]
 
 # Minimum thresholds to publish a pick
 MIN_EDGE_UNDERDOG = 0.03
@@ -58,6 +66,7 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     schedule = fetch_todays_probable_pitchers()
     if schedule.empty:
         logger.warning("No games found for today")
+        _write_pick_artifacts({}, target_date, status="no_games", notes="No games were found on the target date.")
         return {"underdog": [], "spread": [], "over_under": []}
     logger.info("Found %d games today", len(schedule))
 
@@ -109,9 +118,10 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     )
 
     # ---- 7. Storage ---------------------------------------------------------
-    _store_picks(picks, target_date, source="morning")
-
     total = sum(len(v) for v in picks.values())
+    status = "ok" if total else "no_qualifying_picks"
+    notes = "" if total else "Games and odds were processed; no pick cleared the configured edge threshold."
+    _store_picks(picks, target_date, source="morning", status=status, notes=notes)
     logger.info(
         "Generated %d picks: %d underdog, %d spread, %d O/U",
         total,
@@ -219,20 +229,38 @@ def _format_picks(df: pd.DataFrame, pick_type: str) -> list[dict]:
     return picks
 
 
-def _store_picks(picks: dict, target_date: date, source: str = "morning") -> None:
-    """Write picks to the daily CSV, tagging each row with its source."""
+def _write_pick_artifacts(picks: dict, target_date: date, status: str, notes: str = "", source: str = "morning") -> None:
+    """Write the dated history file, canonical snapshot, and status metadata."""
     all_picks = [p for pick_list in picks.values() for p in pick_list]
-    if not all_picks:
-        return
-
-    df = pd.DataFrame(all_picks)
+    df = pd.DataFrame(all_picks, columns=PICK_COLUMNS)
     df["date"] = target_date.isoformat()
     df["source"] = source
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     outpath = PROCESSED_DIR / f"picks_{target_date.isoformat()}.csv"
     df.to_csv(outpath, index=False)
-    logger.info("Picks saved → %s", outpath)
+    df.to_csv(PICKS_TODAY_PATH, index=False)
+
+    metadata = {
+        "status": status,
+        "target_date": target_date.isoformat(),
+        "picks_count": len(df),
+        "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "source_commit": os.environ.get("GITHUB_SHA", "unknown"),
+        "notes": notes,
+    }
+    PICKS_METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    logger.info("Pick artifacts saved → %s and %s", outpath, PICKS_TODAY_PATH)
+
+
+def _store_picks(picks: dict, target_date: date, source: str = "morning", status: str = "ok", notes: str = "") -> None:
+    """Write pick artifacts, including a valid empty snapshot."""
+    _write_pick_artifacts(picks, target_date, status=status, notes=notes, source=source)
+
+
+def write_pipeline_status(status: str, target_date: Optional[date] = None, notes: str = "") -> None:
+    """Persist an explicit pipeline status when orchestration catches a failure."""
+    _write_pick_artifacts({}, target_date or date.today(), status=status, notes=notes, source="pipeline")
 
 
 def _save_consensus_snapshot(consensus: pd.DataFrame, target_date: date, label: str) -> None:
