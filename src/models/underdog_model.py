@@ -172,15 +172,15 @@ def predict_moneyline(
     results["pick"] = np.where(probs_home >= 0.5, "Home", "Away")
 
     if home_ml_col and home_ml_col in game_features.columns:
-        results["edge_home"] = pd.Series(game_features[home_ml_col].values).apply(
-            lambda odds: calculate_edge(float(probs_home[results.index]), odds)
-            if pd.notna(odds) else np.nan
-        )
+        results["edge_home"] = [
+            calculate_edge(float(prob), odds) if pd.notna(odds) else np.nan
+            for prob, odds in zip(probs_home, game_features[home_ml_col].to_numpy())
+        ]
     if away_ml_col and away_ml_col in game_features.columns:
         probs_away = 1 - probs_home
-        results["edge_away"] = pd.Series(game_features[away_ml_col].values).apply(
-            lambda odds: calculate_edge(float(probs_away[results.index]), odds)
-            if pd.notna(odds) else np.nan
-        )
+        results["edge_away"] = [
+            calculate_edge(float(prob), odds) if pd.notna(odds) else np.nan
+            for prob, odds in zip(probs_away, game_features[away_ml_col].to_numpy())
+        ]
 
     return results

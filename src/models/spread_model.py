@@ -173,9 +173,9 @@ def predict_spread(
     )
 
     if spread_price_col and spread_price_col in game_features.columns:
-        results["edge"] = game_features[spread_price_col].apply(
-            lambda odds: calculate_edge(float(probs_cover[results.index]), odds)
-            if pd.notna(odds) else np.nan
-        )
+        results["edge"] = [
+            calculate_edge(float(prob), odds) if pd.notna(odds) else np.nan
+            for prob, odds in zip(probs_cover, game_features[spread_price_col].to_numpy())
+        ]
 
     return results
