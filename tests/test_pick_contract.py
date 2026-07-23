@@ -130,3 +130,7 @@ def test_live_feature_builder_matches_model_schema(tmp_path, monkeypatch):
     assert features.loc[0, "away_WPct"] == 0.55
     assert features.loc[0, "hometeam"] == "New York Yankees"
     assert features.loc[0, "visteam"] == "Boston Red Sox"
+
+
+def test_daily_pipeline_uses_workflow_trained_totals_model():
+    assert daily_pipeline.TOTALS_MODEL_FILENAME == "totals_xgb_v1.joblib"

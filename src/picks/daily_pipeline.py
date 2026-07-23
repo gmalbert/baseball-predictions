@@ -34,6 +34,7 @@ from src.models.features import MONEYLINE_FEATURES, SPREAD_FEATURES, TOTALS_FEAT
 logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
+TOTALS_MODEL_FILENAME = "totals_xgb_v1.joblib"
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data_files" / "processed"
 PICKS_TODAY_PATH = PROCESSED_DIR / "picks_today.csv"
 PICKS_METADATA_PATH = PROCESSED_DIR / "picks_today.meta.json"
@@ -110,7 +111,7 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     )
 
     totals_preds = predict_totals(
-        model_or_path=MODEL_DIR / "totals_lgbm_v1.joblib",
+        model_or_path=MODEL_DIR / TOTALS_MODEL_FILENAME,
         game_features=features,
         over_price_col="over_price",
         under_price_col="under_price",
