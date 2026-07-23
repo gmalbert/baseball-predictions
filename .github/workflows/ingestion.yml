@@ -6,6 +6,10 @@ on:
     - cron: '0 12 * * *'
   workflow_dispatch: {}
 
+concurrency:
+  group: daily-ingestion-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ingest:
     runs-on: ubuntu-latest
@@ -65,7 +69,15 @@ jobs:
           git add data_files/processed/
           git add data_files/retrosheet/*_current.parquet 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update precomputed data and season supplements [skip ci]"
-          git push
+          for attempt in 1 2 3:
+            if git push; then
+              exit 0
+            fi
+            echo "Push raced with another writer; rebasing before retry ${attempt}/3..."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "Unable to push generated artifact after 3 attempts."
+          exit 1
         continue-on-error: true
 
       - name: Train models (season-aware)
@@ -122,4 +134,12 @@ jobs:
           git config --local user.name  "github-actions[bot]"
           git add data_files/best_bets_today.json
           git diff --staged --quiet || git commit -m "chore: update best_bets_today [skip ci]"
-          git push
+          for attempt in 1 2 3:
+            if git push; then
+              exit 0
+            fi
+            echo "Push raced with another writer; rebasing before retry ${attempt}/3..."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "Unable to push generated artifact after 3 attempts."
+          exit 1
