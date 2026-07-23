@@ -90,3 +90,43 @@ def test_export_normalizes_pipeline_csv_fields(tmp_path, monkeypatch):
     assert payload["bets"][0]["bet_type"] == "Spread"
     assert payload["bets"][0]["pick"] == "Home -1.5"
     assert payload["bets"][0]["confidence"] == 0.72
+
+
+def test_live_feature_builder_matches_model_schema(tmp_path, monkeypatch):
+    baseline = pd.DataFrame([{
+        "season": 2026,
+        "date": "2026-07-21",
+        "hometeam": "Yankees",
+        "visteam": "Red Sox",
+        "home_WPct": 0.60,
+        "away_WPct": 0.55,
+        "home_ERA": 3.80,
+        "away_ERA": 4.10,
+        "home_RS_G": 5.0,
+        "away_RS_G": 4.5,
+        "home_RA_G": 4.0,
+        "away_RA_G": 4.8,
+    }])
+    baseline.to_parquet(tmp_path / "model_features.parquet", index=False)
+    monkeypatch.setattr(daily_pipeline, "MODEL_FEATURES_PATH", tmp_path / "model_features.parquet")
+
+    schedule = pd.DataFrame([{
+        "game_id": "g1",
+        "date": "2026-07-22",
+        "away_team": "Boston Red Sox",
+        "home_team": "New York Yankees",
+    }])
+    odds = pd.DataFrame([{
+        "game_id": "g1",
+        "away_team": "Boston Red Sox",
+        "home_team": "New York Yankees",
+        "home_moneyline": -120,
+    }])
+
+    features = daily_pipeline._build_todays_features(schedule, odds, pd.DataFrame())
+    required = set(daily_pipeline.MONEYLINE_FEATURES + daily_pipeline.SPREAD_FEATURES + daily_pipeline.TOTALS_FEATURES)
+    assert required.issubset(features.columns)
+    assert features.loc[0, "home_WPct"] == 0.60
+    assert features.loc[0, "away_WPct"] == 0.55
+    assert features.loc[0, "hometeam"] == "New York Yankees"
+    assert features.loc[0, "visteam"] == "Boston Red Sox"

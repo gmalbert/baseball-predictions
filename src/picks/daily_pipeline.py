@@ -29,6 +29,7 @@ from src.ingestion.weather import fetch_weather_for_games
 from src.models.underdog_model import predict_moneyline
 from src.models.spread_model import predict_spread
 from src.models.totals_model import predict_totals
+from src.models.features import MONEYLINE_FEATURES, SPREAD_FEATURES, TOTALS_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data_files" / "processed"
 PICKS_TODAY_PATH = PROCESSED_DIR / "picks_today.csv"
 PICKS_METADATA_PATH = PROCESSED_DIR / "picks_today.meta.json"
+MODEL_FEATURES_PATH = PROCESSED_DIR / "model_features.parquet"
 PICK_COLUMNS = [
     "game_id", "away_team", "home_team", "pick_type", "pick_value",
     "predicted_prob", "confidence_score", "edge", "game_date", "source",
@@ -170,7 +172,12 @@ def _build_todays_features(
     odds: pd.DataFrame,
     weather: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Merge schedule, odds, and weather into a feature matrix."""
+    """Build today's rows with the same feature schema used during training.
+
+    Current-season precomputed rows provide the latest available team-level
+    statistics. Features that are game-specific or unavailable live use the
+    corresponding historical median, with a neutral zero fallback.
+    """
     features = schedule.merge(odds, on=["away_team", "home_team"], how="left")
     if "game_id" not in features.columns:
         if "game_id_x" in features.columns:
@@ -189,8 +196,135 @@ def _build_todays_features(
         if "game_id" in weather_cols:
             features = features.merge(weather[weather_cols], on="game_id", how="left")
 
-    # TODO: merge team_season_stats and pitcher_stats from processed/
+    if "temp_f" in features.columns:
+        features["temp"] = pd.to_numeric(features["temp_f"], errors="coerce")
+    if "wind_mph" in features.columns:
+        features["windspeed"] = pd.to_numeric(features["wind_mph"], errors="coerce")
+    if "is_day" not in features.columns:
+        features["is_day"] = 1.0
+
+    if MODEL_FEATURES_PATH.exists():
+        baseline = pd.read_parquet(MODEL_FEATURES_PATH)
+        _merge_latest_team_features(features, baseline)
+    else:
+        logger.warning("%s not found; live features will use neutral defaults", MODEL_FEATURES_PATH)
+
+    required = list(dict.fromkeys(MONEYLINE_FEATURES + SPREAD_FEATURES + TOTALS_FEATURES))
+    missing_before_fill = [col for col in required if col not in features.columns]
+    baseline_medians = {
+        col: pd.to_numeric(baseline[col], errors="coerce").median()
+        for col in required
+        if MODEL_FEATURES_PATH.exists() and col in baseline.columns
+    }
+    missing_values = {
+        col: baseline_medians.get(col, 0.0)
+        for col in missing_before_fill
+    }
+    if missing_values:
+        features = pd.concat(
+            [features, pd.DataFrame(missing_values, index=features.index)], axis=1
+        )
+    features = features.copy()
+    for col in required:
+        if col in features.columns:
+            features[col] = pd.to_numeric(features[col], errors="coerce").fillna(
+                baseline_medians.get(col, 0.0)
+            )
+
+    # Recompute direct matchup fields after team snapshots are attached.
+    derived = {}
+    for col, home_col, away_col in (
+        ("WPct_diff", "home_WPct", "away_WPct"),
+        ("PythWPct_diff", "home_PythWPct", "away_PythWPct"),
+        ("ERA_diff", "away_ERA", "home_ERA"),
+        ("WHIP_diff", "away_WHIP", "home_WHIP"),
+        ("RS_advantage", "home_RS_G", "away_RS_G"),
+        ("RA_advantage", "away_RA_G", "home_RA_G"),
+    ):
+        if home_col in features and away_col in features:
+            derived[col] = features[home_col] - features[away_col]
+    if derived:
+        features = features.assign(**derived)
+    default_total = features["home_RS_G"] + features["away_RS_G"]
+    features = features.assign(
+        exp_total=features.get("posted_total", default_total).fillna(default_total),
+        hometeam=features["home_team"],
+        visteam=features["away_team"],
+        date=features.get("date", pd.Timestamp.now().date()),
+    )
+    _validate_live_feature_schema(features)
     return features
+
+
+def _normalise_team_name(value: object) -> str:
+    """Map MLB API names such as 'New York Yankees' to Retrosheet names."""
+    name = " ".join(str(value or "").lower().replace(".", "").split())
+    aliases = {
+        "los angeles angels": "angels", "la angels": "angels",
+        "los angeles dodgers": "dodgers", "la dodgers": "dodgers",
+        "arizona diamondbacks": "diamondbacks", "atlanta braves": "braves",
+        "baltimore orioles": "orioles", "boston red sox": "red sox",
+        "chicago cubs": "cubs", "chicago white sox": "white sox",
+        "cincinnati reds": "reds", "cleveland guardians": "guardians",
+        "colorado rockies": "rockies", "detroit tigers": "tigers",
+        "houston astros": "astros", "kansas city royals": "royals",
+        "miami marlins": "marlins", "milwaukee brewers": "brewers",
+        "minnesota twins": "twins", "new york mets": "mets",
+        "new york yankees": "yankees", "oakland athletics": "athletics",
+        "philadelphia phillies": "phillies", "pittsburgh pirates": "pirates",
+        "san diego padres": "padres", "san francisco giants": "giants",
+        "seattle mariners": "mariners", "st louis cardinals": "cardinals",
+        "tampa bay rays": "rays", "texas rangers": "rangers",
+        "toronto blue jays": "blue jays", "washington nationals": "nationals",
+    }
+    return aliases.get(name, name)
+
+
+def _merge_latest_team_features(features: pd.DataFrame, baseline: pd.DataFrame) -> None:
+    """Attach the latest season team-side features to live game rows."""
+    if baseline.empty or not {"hometeam", "visteam"}.issubset(baseline.columns):
+        return
+    baseline = baseline.copy()
+    if "date" in baseline:
+        baseline["date"] = pd.to_datetime(baseline["date"], errors="coerce")
+    if "season" in baseline:
+        current = baseline[baseline["season"] == baseline["season"].max()]
+        if not current.empty:
+            baseline = current
+
+    side_frames = []
+    for side, team_col in (("home", "hometeam"), ("away", "visteam")):
+        value_cols = [c for c in baseline.columns if c.startswith(f"{side}_")]
+        if not value_cols:
+            continue
+        team_rows = baseline[[team_col] + value_cols + (["date"] if "date" in baseline else [])].copy()
+        team_rows["team_key"] = team_rows[team_col].map(_normalise_team_name)
+        team_rows = team_rows.sort_values("date" if "date" in team_rows else team_col)
+        team_rows = team_rows.drop_duplicates("team_key", keep="last")
+        team_rows = team_rows.rename(columns={c: f"team_{c[len(side) + 1:]}" for c in value_cols})
+        side_frames.append(team_rows.set_index("team_key"))
+
+    if side_frames:
+        team_snapshot = pd.concat(side_frames, axis=0).groupby(level=0).last()
+    else:
+        team_snapshot = pd.DataFrame()
+
+    for target_side, live_col in (("home", "home_team"), ("away", "away_team")):
+        if team_snapshot.empty:
+            continue
+        keys = features[live_col].map(_normalise_team_name)
+        team_values = team_snapshot.reindex(keys).reset_index(drop=True)
+        team_values = team_values.reset_index(drop=True)
+        for col in team_values.columns:
+            if col.startswith("team_"):
+                features[f"{target_side}_{col[5:]}"] = team_values[col].to_numpy()
+
+
+def _validate_live_feature_schema(features: pd.DataFrame) -> None:
+    required = list(dict.fromkeys(MONEYLINE_FEATURES + SPREAD_FEATURES + TOTALS_FEATURES))
+    missing = [col for col in required if col not in features.columns]
+    if missing:
+        raise ValueError(f"Live feature schema incomplete; missing {len(missing)} columns: {missing}")
 
 
 def _filter_picks(predictions: pd.DataFrame, min_edge: float, min_confidence: float) -> pd.DataFrame:

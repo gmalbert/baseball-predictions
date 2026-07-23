@@ -107,6 +107,7 @@ def train_totals_model(
         ("clf", classifier),
     ])
     model.fit(X_train, y_train)
+    model.feature_cols_ = list(feature_cols)
 
     y_prob = model.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= 0.5).astype(int)
@@ -157,7 +158,7 @@ def train_totals_model(
 def predict_totals(
     model_or_path: "Pipeline | str | Path",
     game_features: pd.DataFrame,
-    feature_cols: list[str] = TOTALS_FEATURES,
+    feature_cols: list[str] | None = None,
     over_price_col: str | None = None,
     under_price_col: str | None = None,
 ) -> pd.DataFrame:
@@ -177,10 +178,20 @@ def predict_totals(
     if not isinstance(model_or_path, Pipeline):
         model_or_path = joblib.load(model_or_path)
 
+    feature_cols = list(getattr(model_or_path, "feature_cols_", feature_cols or TOTALS_FEATURES))
+    expected = getattr(model_or_path, "n_features_in_", None)
+    if expected is not None and expected != len(feature_cols):
+        raise ValueError(
+            f"Model expects {expected} features but inference contract provides {len(feature_cols)}; retrain the model."
+        )
+    missing = [col for col in feature_cols if col not in game_features.columns]
+    if missing:
+        raise ValueError(f"Live feature schema missing {len(missing)} model columns: {missing}")
+
     X = game_features[feature_cols].fillna(0).values
     probs_over = model_or_path.predict_proba(X)[:, 1]
 
-    id_cols = [c for c in ("date", "hometeam", "visteam", "exp_total")
+    id_cols = [c for c in ("game_id", "date", "hometeam", "visteam", "exp_total")
                if c in game_features.columns]
     results = game_features[id_cols].copy().reset_index(drop=True)
     results["pred_prob_over"]  = probs_over.round(4)
