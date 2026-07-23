@@ -21,8 +21,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-CHADWICK_URL = (
-    "https://raw.githubusercontent.com/chadwickbureau/register/master/data/people.csv"
+CHADWICK_URLS = tuple(
+    f"https://raw.githubusercontent.com/chadwickbureau/register/master/data/people-{suffix}.csv"
+    for suffix in "0123456789abcdef"
 )
 
 _PROCESSED = Path(__file__).resolve().parents[2] / "data_files" / "processed"
@@ -60,7 +61,11 @@ def load_player_registry(force_refresh: bool = False) -> pd.DataFrame:
 
     logger.info("Fetching Chadwick Bureau player registry from GitHub…")
     try:
-        df = pd.read_csv(CHADWICK_URL, dtype=str, low_memory=False)
+        shards = [
+            pd.read_csv(url, dtype=str, low_memory=False)
+            for url in CHADWICK_URLS
+        ]
+        df = pd.concat(shards, ignore_index=True)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to fetch Chadwick registry: %s", exc)
         return pd.DataFrame(columns=_KEEP_COLS)
