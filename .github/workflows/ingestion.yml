@@ -69,7 +69,7 @@ jobs:
           git add data_files/processed/
           git add data_files/retrosheet/*_current.parquet 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update precomputed data and season supplements [skip ci]"
-          for attempt in 1 2 3:
+          for attempt in 1 2 3; do
             if git push; then
               exit 0
             fi
@@ -134,7 +134,7 @@ jobs:
           git config --local user.name  "github-actions[bot]"
           git add data_files/best_bets_today.json
           git diff --staged --quiet || git commit -m "chore: update best_bets_today [skip ci]"
-          for attempt in 1 2 3:
+          for attempt in 1 2 3; do
             if git push; then
               exit 0
             fi
