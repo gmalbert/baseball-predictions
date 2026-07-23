@@ -196,6 +196,9 @@ def _build_todays_features(
         ]
         if "game_id" in weather_cols:
             features = features.merge(weather[weather_cols], on="game_id", how="left")
+    # Defragment after the schedule/odds/weather merges before adding the
+    # wide live feature matrix below.
+    features = features.copy()
 
     if "temp_f" in features.columns:
         features["temp"] = pd.to_numeric(features["temp_f"], errors="coerce")
@@ -310,6 +313,7 @@ def _merge_latest_team_features(features: pd.DataFrame, baseline: pd.DataFrame) 
     else:
         team_snapshot = pd.DataFrame()
 
+    feature_updates = {}
     for target_side, live_col in (("home", "home_team"), ("away", "away_team")):
         if team_snapshot.empty:
             continue
@@ -318,7 +322,11 @@ def _merge_latest_team_features(features: pd.DataFrame, baseline: pd.DataFrame) 
         team_values = team_values.reset_index(drop=True)
         for col in team_values.columns:
             if col.startswith("team_"):
-                features[f"{target_side}_{col[5:]}"] = team_values[col].to_numpy()
+                feature_updates[f"{target_side}_{col[5:]}"] = team_values[col].to_numpy()
+    if feature_updates:
+        features = pd.concat(
+            [features, pd.DataFrame(feature_updates, index=features.index)], axis=1
+        )
 
 
 def _validate_live_feature_schema(features: pd.DataFrame) -> None:
