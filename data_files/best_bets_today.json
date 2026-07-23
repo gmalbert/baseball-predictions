@@ -1,10 +1,10 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-07-23T03:00:39.735422+00:00",
+    "generated_at": "2026-07-23T10:59:48.837880+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "notes": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
+    "notes": "FileNotFoundError: [Errno 2] No such file or directory: '/home/runner/work/baseball-predictions/baseball-predictions/models/totals_lgbm_v1.joblib'",
     "status": "pipeline_failed",
     "target_date": "2026-07-23",
     "picks_count": 0
