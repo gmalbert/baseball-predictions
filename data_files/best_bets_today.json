@@ -1,15 +1,13 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-07-23T12:43:53.285931+00:00",
+    "generated_at": "2026-07-24T00:29:05.085960+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "status": "pipeline_pending",
-    "tier_definition": "edge-v1",
-    "lookahead_days": 0,
-    "source_commit": "900c44edfacb22b07025c90e369a715eb3089221",
-    "total_bets": 0,
-    "notes": "picks_today.parquet not found — daily pipeline may not have run yet"
+    "notes": "No qualifying MLB picks for 2026-07-24",
+    "status": "no_qualifying_picks",
+    "target_date": "2026-07-24",
+    "picks_count": 0
   },
   "bets": []
 }
