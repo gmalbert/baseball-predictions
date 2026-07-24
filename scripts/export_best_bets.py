@@ -1,6 +1,6 @@
 ﻿"""
 scripts/export_best_bets.py — MLB (baseball-predictions)
-Reads data_files/processed/picks_today.parquet (written by src/picks/daily_pipeline.py)
+Reads data_files/processed/picks_today.csv and its metadata (written by src/picks/daily_pipeline.py)
 and writes data_files/best_bets_today.json in the unified Sports Picks Grid schema.
 """
 import json
@@ -12,10 +12,11 @@ SPORT = "MLB"
 MODEL_VERSION = "1.0.0"
 SEASON = str(date.today().year)
 OUT_PATH = Path("data_files/best_bets_today.json")
-SRC_PATH = Path("data_files/processed/picks_today.parquet")
+SRC_PATH = Path("data_files/processed/picks_today.csv")
+META_PATH = Path("data_files/processed/picks_today.meta.json")
 
 
-def _write(bets: list, notes: str = "", status: str | None = None) -> None:
+def _write(bets: list, notes: str = "", status: str | None = None, target_date: str | None = None, picks_count: int | None = None) -> None:
     if status is None:
         status = "ok" if bets else "no_picks"
     payload: dict = {
@@ -34,6 +35,12 @@ def _write(bets: list, notes: str = "", status: str | None = None) -> None:
     }
     if notes:
         payload["meta"]["notes"] = notes
+    if status:
+        payload["meta"]["status"] = status
+    if target_date:
+        payload["meta"]["target_date"] = target_date
+    if picks_count is not None:
+        payload["meta"]["picks_count"] = picks_count
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
     print(f"[{SPORT}] Wrote {len(bets)} bets -> {OUT_PATH}")
@@ -62,22 +69,36 @@ def main() -> None:
     # Baseball season: March–November
     month = today.month
     if not (3 <= month <= 11):
-        _write([], "MLB off-season", "off_season")
+        _write([], "MLB off-season", status="off_season", target_date=str(today), picks_count=0)
         return
 
     if not SRC_PATH.exists():
-        _write([], "picks_today.parquet not found — daily pipeline may not have run yet", "pipeline_pending")
+        _write([], "Canonical pick snapshot not found — daily pipeline may not have run yet", status="pipeline_pending", target_date=str(today), picks_count=0)
+        return
+
+    metadata = {}
+    if META_PATH.exists():
+        try:
+            metadata = json.loads(META_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            _write([], f"Failed to read {META_PATH}: {e}", status="pipeline_failed", target_date=str(today), picks_count=0)
+            return
+
+    status = metadata.get("status", "ok")
+    target_date = metadata.get("target_date", str(today))
+    if status in {"pipeline_failed", "no_games", "no_qualifying_picks"}:
+        _write([], metadata.get("notes", status), status=status, target_date=target_date, picks_count=metadata.get("picks_count", 0))
         return
 
     try:
         import pandas as pd
-        df = pd.read_parquet(SRC_PATH)
+        df = pd.read_csv(SRC_PATH)
     except Exception as e:
-        _write([], f"Failed to read {SRC_PATH}: {e}", "pipeline_failed")
+        _write([], f"Failed to read {SRC_PATH}: {e}", status="pipeline_failed", target_date=target_date, picks_count=0)
         return
 
     if df.empty:
-        _write([], f"No MLB picks for {today}")
+        _write([], f"No MLB picks for {today}", status="no_qualifying_picks", target_date=target_date, picks_count=0)
         return
 
     # Filter to today
@@ -85,12 +106,21 @@ def main() -> None:
         df["game_date"] = pd.to_datetime(df["game_date"], errors="coerce").dt.date
         df = df[df["game_date"] == today]
 
+    # Normalize the daily pipeline's legacy CSV fields at the contract boundary.
+    if "pick_type" in df.columns and "bet_type" not in df.columns:
+        type_map = {"underdog": "Moneyline", "spread": "Spread", "over_under": "Over/Under"}
+        df["bet_type"] = df["pick_type"].map(type_map).fillna(df["pick_type"])
+    if "pick_value" in df.columns and "pick" not in df.columns:
+        df["pick"] = df["pick_value"]
+    if "confidence_score" in df.columns and "confidence" not in df.columns:
+        df["confidence"] = df["confidence_score"]
+
     # Exclude PASS signals
     if "badge" in df.columns:
         df = df[df["badge"].isin(["BET", "LEAN"])]
 
     if df.empty:
-        _write([], f"No qualifying MLB picks for {today}")
+        _write([], f"No qualifying MLB picks for {today}", status="no_qualifying_picks", target_date=target_date, picks_count=0)
         return
 
     bets = []
@@ -126,7 +156,7 @@ def main() -> None:
         }
         bets.append(bet)
 
-    _write(bets)
+    _write(bets, status="ok", target_date=target_date, picks_count=len(bets))
 
 
 if __name__ == "__main__":

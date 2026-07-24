@@ -114,11 +114,82 @@ _MLB_TEAM_NAMES = [
 ]
 
 
+def _read_fg_guts_table(url: str, expected_columns: int) -> pd.DataFrame:
+    """Read the substantive table from one FanGraphs Guts! page.
+
+    The Guts pages are the public, browser-facing source for park factors.
+    They are substantially more stable than FanGraphs' undocumented JSON API,
+    which is protected by Cloudflare and regularly rejects GitHub-hosted
+    runners.
+    """
+    tables = pd.read_html(url, header=0)
+    table = next((t for t in tables if t.shape[1] >= expected_columns), None)
+    if table is None:
+        raise ValueError(f"Park-factor table with {expected_columns} columns not found")
+    return table.iloc[:, :expected_columns].copy()
+
+
+def _fetch_fg_guts_park_factors(year: int) -> pd.DataFrame:
+    """Fetch park factors from FanGraphs' public Guts! tables.
+
+    ``type=pf`` supplies the overall park factor and ``type=pfh`` supplies
+    the handedness-specific hit and home-run factors.  The overall factor is
+    applied to both handedness rows because FanGraphs does not publish a
+    handedness-specific ``Basic`` value.
+    """
+    base_url = "https://www.fangraphs.com/guts.aspx?teamid=0&season="
+    overall = _read_fg_guts_table(f"{base_url}{year}&type=pf", 16)
+    handed = _read_fg_guts_table(f"{base_url}{year}&type=pfh", 10)
+
+    overall.columns = [
+        "season", "team", "pf_basic", "pf_3yr", "pf_1yr", "pf_1b",
+        "pf_2b", "pf_3b", "pf_hr", "pf_so", "pf_bb", "pf_gb", "pf_fb",
+        "pf_ld", "pf_iffb", "pf_fip",
+    ]
+    handed.columns = [
+        "season", "team", "pf_1b_l", "pf_1b_r", "pf_2b_l", "pf_2b_r",
+        "pf_3b_l", "pf_3b_r", "pf_hr_l", "pf_hr_r",
+    ]
+
+    for frame in (overall, handed):
+        frame["season"] = pd.to_numeric(frame["season"], errors="coerce")
+        frame.dropna(subset=["season", "team"], inplace=True)
+        frame["season"] = frame["season"].astype(int)
+
+    overall = overall[overall["season"] == year]
+    handed = handed[handed["season"] == year]
+    merged = overall.merge(handed, on=["season", "team"], how="inner")
+    if merged.empty:
+        raise ValueError(f"No FanGraphs park factors returned for {year}")
+
+    rows: list[dict] = []
+    for hand in ("L", "R"):
+        suffix = hand.lower()
+        for _, row in merged.iterrows():
+            rows.append({
+                "team": row["team"],
+                "hand": hand,
+                "season": year,
+                "pf_basic": row["pf_basic"],
+                "pf_hr": row[f"pf_hr_{suffix}"],
+                "pf_1b": row[f"pf_1b_{suffix}"],
+                "pf_2b": row[f"pf_2b_{suffix}"],
+                "pf_3b": row[f"pf_3b_{suffix}"],
+            })
+
+    df = pd.DataFrame(rows)
+    for column in df.columns:
+        if column.startswith("pf_"):
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    return df.reset_index(drop=True)
+
+
 def fetch_fg_park_factors(year: int, save: bool = True) -> pd.DataFrame:
     """Fetch FanGraphs park factors (L+R handedness) for one season.
 
-    Calls the FanGraphs API once per handedness split (two requests total)
-    and returns a combined DataFrame.
+    Reads FanGraphs' public Guts! park-factor tables and returns a combined
+    handedness-split DataFrame. Falls back to the legacy API, then to
+    Retrosheet-derived factors, if the public tables are unavailable.
 
     Args:
         year: The MLB season.
@@ -126,9 +197,22 @@ def fetch_fg_park_factors(year: int, save: bool = True) -> pd.DataFrame:
 
     Returns:
         DataFrame with columns: team, hand, season, pf_basic (and more
-        if the API returns them).  Returns a neutral-factor fallback if
-        both API calls fail.
+        if the source returns them). Returns a neutral-factor fallback only
+        after all live and Retrosheet sources fail.
     """
+    try:
+        df = _fetch_fg_guts_park_factors(year)
+        if save:
+            _PROCESSED.mkdir(parents=True, exist_ok=True)
+            outpath = _PROCESSED / f"fg_park_{year}.parquet"
+            df.to_parquet(outpath, index=False)
+            logger.info("Saved %s (%d rows) from FanGraphs Guts!", outpath, len(df))
+        return df
+    except Exception as exc:  # noqa: BLE001
+        logger.info("FanGraphs Guts! park-factor fetch failed for %d: %s", year, exc)
+
+    # Legacy fallback: this undocumented API is occasionally still available,
+    # but Cloudflare commonly blocks it on GitHub Actions runners.
     results: list[dict] = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

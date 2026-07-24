@@ -15,6 +15,8 @@ job can compare lines and detect significant movement.
 from __future__ import annotations
 
 import logging
+import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -27,11 +29,20 @@ from src.ingestion.weather import fetch_weather_for_games
 from src.models.underdog_model import predict_moneyline
 from src.models.spread_model import predict_spread
 from src.models.totals_model import predict_totals
+from src.models.features import MONEYLINE_FEATURES, SPREAD_FEATURES, TOTALS_FEATURES
 
 logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
+TOTALS_MODEL_FILENAME = "totals_xgb_v1.joblib"
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data_files" / "processed"
+PICKS_TODAY_PATH = PROCESSED_DIR / "picks_today.csv"
+PICKS_METADATA_PATH = PROCESSED_DIR / "picks_today.meta.json"
+MODEL_FEATURES_PATH = PROCESSED_DIR / "model_features.parquet"
+PICK_COLUMNS = [
+    "game_id", "away_team", "home_team", "pick_type", "pick_value",
+    "predicted_prob", "confidence_score", "edge", "game_date", "source",
+]
 
 # Minimum thresholds to publish a pick
 MIN_EDGE_UNDERDOG = 0.03
@@ -58,6 +69,7 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     schedule = fetch_todays_probable_pitchers()
     if schedule.empty:
         logger.warning("No games found for today")
+        _write_pick_artifacts({}, target_date, status="no_games", notes="No games were found on the target date.")
         return {"underdog": [], "spread": [], "over_under": []}
     logger.info("Found %d games today", len(schedule))
 
@@ -99,7 +111,7 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     )
 
     totals_preds = predict_totals(
-        model_or_path=MODEL_DIR / "totals_lgbm_v1.joblib",
+        model_or_path=MODEL_DIR / TOTALS_MODEL_FILENAME,
         game_features=features,
         over_price_col="over_price",
         under_price_col="under_price",
@@ -109,9 +121,10 @@ def run_daily_pipeline(target_date: Optional[date] = None) -> dict:
     )
 
     # ---- 7. Storage ---------------------------------------------------------
-    _store_picks(picks, target_date, source="morning")
-
     total = sum(len(v) for v in picks.values())
+    status = "ok" if total else "no_qualifying_picks"
+    notes = "" if total else "Games and odds were processed; no pick cleared the configured edge threshold."
+    _store_picks(picks, target_date, source="morning", status=status, notes=notes)
     logger.info(
         "Generated %d picks: %d underdog, %d spread, %d O/U",
         total,
@@ -160,7 +173,12 @@ def _build_todays_features(
     odds: pd.DataFrame,
     weather: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Merge schedule, odds, and weather into a feature matrix."""
+    """Build today's rows with the same feature schema used during training.
+
+    Current-season precomputed rows provide the latest available team-level
+    statistics. Features that are game-specific or unavailable live use the
+    corresponding historical median, with a neutral zero fallback.
+    """
     features = schedule.merge(odds, on=["away_team", "home_team"], how="left")
     if "game_id" not in features.columns:
         if "game_id_x" in features.columns:
@@ -178,9 +196,144 @@ def _build_todays_features(
         ]
         if "game_id" in weather_cols:
             features = features.merge(weather[weather_cols], on="game_id", how="left")
+    # Defragment after the schedule/odds/weather merges before adding the
+    # wide live feature matrix below.
+    features = features.copy()
 
-    # TODO: merge team_season_stats and pitcher_stats from processed/
+    if "temp_f" in features.columns:
+        features["temp"] = pd.to_numeric(features["temp_f"], errors="coerce")
+    if "wind_mph" in features.columns:
+        features["windspeed"] = pd.to_numeric(features["wind_mph"], errors="coerce")
+    if "is_day" not in features.columns:
+        features["is_day"] = 1.0
+
+    if MODEL_FEATURES_PATH.exists():
+        baseline = pd.read_parquet(MODEL_FEATURES_PATH)
+        _merge_latest_team_features(features, baseline)
+    else:
+        logger.warning("%s not found; live features will use neutral defaults", MODEL_FEATURES_PATH)
+
+    required = list(dict.fromkeys(MONEYLINE_FEATURES + SPREAD_FEATURES + TOTALS_FEATURES))
+    missing_before_fill = [col for col in required if col not in features.columns]
+    baseline_medians = {
+        col: pd.to_numeric(baseline[col], errors="coerce").median()
+        for col in required
+        if MODEL_FEATURES_PATH.exists() and col in baseline.columns
+    }
+    missing_values = {
+        col: baseline_medians.get(col, 0.0)
+        for col in missing_before_fill
+    }
+    if missing_values:
+        features = pd.concat(
+            [features, pd.DataFrame(missing_values, index=features.index)], axis=1
+        )
+    features = features.copy()
+    for col in required:
+        if col in features.columns:
+            features[col] = pd.to_numeric(features[col], errors="coerce").fillna(
+                baseline_medians.get(col, 0.0)
+            )
+
+    # Recompute direct matchup fields after team snapshots are attached.
+    derived = {}
+    for col, home_col, away_col in (
+        ("WPct_diff", "home_WPct", "away_WPct"),
+        ("PythWPct_diff", "home_PythWPct", "away_PythWPct"),
+        ("ERA_diff", "away_ERA", "home_ERA"),
+        ("WHIP_diff", "away_WHIP", "home_WHIP"),
+        ("RS_advantage", "home_RS_G", "away_RS_G"),
+        ("RA_advantage", "away_RA_G", "home_RA_G"),
+    ):
+        if home_col in features and away_col in features:
+            derived[col] = features[home_col] - features[away_col]
+    if derived:
+        features = features.assign(**derived)
+    default_total = features["home_RS_G"] + features["away_RS_G"]
+    features = features.assign(
+        exp_total=features.get("posted_total", default_total).fillna(default_total),
+        hometeam=features["home_team"],
+        visteam=features["away_team"],
+        date=features.get("date", pd.Timestamp.now().date()),
+    )
+    _validate_live_feature_schema(features)
     return features
+
+
+def _normalise_team_name(value: object) -> str:
+    """Map MLB API names such as 'New York Yankees' to Retrosheet names."""
+    name = " ".join(str(value or "").lower().replace(".", "").split())
+    aliases = {
+        "los angeles angels": "angels", "la angels": "angels",
+        "los angeles dodgers": "dodgers", "la dodgers": "dodgers",
+        "arizona diamondbacks": "diamondbacks", "atlanta braves": "braves",
+        "baltimore orioles": "orioles", "boston red sox": "red sox",
+        "chicago cubs": "cubs", "chicago white sox": "white sox",
+        "cincinnati reds": "reds", "cleveland guardians": "guardians",
+        "colorado rockies": "rockies", "detroit tigers": "tigers",
+        "houston astros": "astros", "kansas city royals": "royals",
+        "miami marlins": "marlins", "milwaukee brewers": "brewers",
+        "minnesota twins": "twins", "new york mets": "mets",
+        "new york yankees": "yankees", "oakland athletics": "athletics",
+        "philadelphia phillies": "phillies", "pittsburgh pirates": "pirates",
+        "san diego padres": "padres", "san francisco giants": "giants",
+        "seattle mariners": "mariners", "st louis cardinals": "cardinals",
+        "tampa bay rays": "rays", "texas rangers": "rangers",
+        "toronto blue jays": "blue jays", "washington nationals": "nationals",
+    }
+    return aliases.get(name, name)
+
+
+def _merge_latest_team_features(features: pd.DataFrame, baseline: pd.DataFrame) -> None:
+    """Attach the latest season team-side features to live game rows."""
+    if baseline.empty or not {"hometeam", "visteam"}.issubset(baseline.columns):
+        return
+    baseline = baseline.copy()
+    if "date" in baseline:
+        baseline["date"] = pd.to_datetime(baseline["date"], errors="coerce")
+    if "season" in baseline:
+        current = baseline[baseline["season"] == baseline["season"].max()]
+        if not current.empty:
+            baseline = current
+
+    side_frames = []
+    for side, team_col in (("home", "hometeam"), ("away", "visteam")):
+        value_cols = [c for c in baseline.columns if c.startswith(f"{side}_")]
+        if not value_cols:
+            continue
+        team_rows = baseline[[team_col] + value_cols + (["date"] if "date" in baseline else [])].copy()
+        team_rows["team_key"] = team_rows[team_col].map(_normalise_team_name)
+        team_rows = team_rows.sort_values("date" if "date" in team_rows else team_col)
+        team_rows = team_rows.drop_duplicates("team_key", keep="last")
+        team_rows = team_rows.rename(columns={c: f"team_{c[len(side) + 1:]}" for c in value_cols})
+        side_frames.append(team_rows.set_index("team_key"))
+
+    if side_frames:
+        team_snapshot = pd.concat(side_frames, axis=0).groupby(level=0).last()
+    else:
+        team_snapshot = pd.DataFrame()
+
+    feature_updates = {}
+    for target_side, live_col in (("home", "home_team"), ("away", "away_team")):
+        if team_snapshot.empty:
+            continue
+        keys = features[live_col].map(_normalise_team_name)
+        team_values = team_snapshot.reindex(keys).reset_index(drop=True)
+        team_values = team_values.reset_index(drop=True)
+        for col in team_values.columns:
+            if col.startswith("team_"):
+                feature_updates[f"{target_side}_{col[5:]}"] = team_values[col].to_numpy()
+    if feature_updates:
+        features = pd.concat(
+            [features, pd.DataFrame(feature_updates, index=features.index)], axis=1
+        )
+
+
+def _validate_live_feature_schema(features: pd.DataFrame) -> None:
+    required = list(dict.fromkeys(MONEYLINE_FEATURES + SPREAD_FEATURES + TOTALS_FEATURES))
+    missing = [col for col in required if col not in features.columns]
+    if missing:
+        raise ValueError(f"Live feature schema incomplete; missing {len(missing)} columns: {missing}")
 
 
 def _filter_picks(predictions: pd.DataFrame, min_edge: float, min_confidence: float) -> pd.DataFrame:
@@ -219,20 +372,38 @@ def _format_picks(df: pd.DataFrame, pick_type: str) -> list[dict]:
     return picks
 
 
-def _store_picks(picks: dict, target_date: date, source: str = "morning") -> None:
-    """Write picks to the daily CSV, tagging each row with its source."""
+def _write_pick_artifacts(picks: dict, target_date: date, status: str, notes: str = "", source: str = "morning") -> None:
+    """Write the dated history file, canonical snapshot, and status metadata."""
     all_picks = [p for pick_list in picks.values() for p in pick_list]
-    if not all_picks:
-        return
-
-    df = pd.DataFrame(all_picks)
+    df = pd.DataFrame(all_picks, columns=PICK_COLUMNS)
     df["date"] = target_date.isoformat()
     df["source"] = source
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     outpath = PROCESSED_DIR / f"picks_{target_date.isoformat()}.csv"
     df.to_csv(outpath, index=False)
-    logger.info("Picks saved → %s", outpath)
+    df.to_csv(PICKS_TODAY_PATH, index=False)
+
+    metadata = {
+        "status": status,
+        "target_date": target_date.isoformat(),
+        "picks_count": len(df),
+        "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "source_commit": os.environ.get("GITHUB_SHA", "unknown"),
+        "notes": notes,
+    }
+    PICKS_METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    logger.info("Pick artifacts saved → %s and %s", outpath, PICKS_TODAY_PATH)
+
+
+def _store_picks(picks: dict, target_date: date, source: str = "morning", status: str = "ok", notes: str = "") -> None:
+    """Write pick artifacts, including a valid empty snapshot."""
+    _write_pick_artifacts(picks, target_date, status=status, notes=notes, source=source)
+
+
+def write_pipeline_status(status: str, target_date: Optional[date] = None, notes: str = "") -> None:
+    """Persist an explicit pipeline status when orchestration catches a failure."""
+    _write_pick_artifacts({}, target_date or date.today(), status=status, notes=notes, source="pipeline")
 
 
 def _save_consensus_snapshot(consensus: pd.DataFrame, target_date: date, label: str) -> None:

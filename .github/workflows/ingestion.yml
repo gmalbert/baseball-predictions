@@ -6,13 +6,17 @@ on:
     - cron: '0 12 * * *'
   workflow_dispatch: {}
 
+concurrency:
+  group: daily-ingestion-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ingest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install dependencies
@@ -65,7 +69,15 @@ jobs:
           git add data_files/processed/
           git add data_files/retrosheet/*_current.parquet 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update precomputed data and season supplements [skip ci]"
-          git push
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push raced with another writer; rebasing before retry ${attempt}/3..."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "Unable to push generated artifact after 3 attempts."
+          exit 1
         continue-on-error: true
 
       - name: Train models (season-aware)
@@ -102,16 +114,22 @@ jobs:
               sys.exit(0)
 
           from src.picks.daily_pipeline import run_daily_pipeline
-          run_daily_pipeline()
+          try:
+              run_daily_pipeline()
+          except Exception as exc:
+              from src.picks.daily_pipeline import write_pipeline_status
+              write_pipeline_status('pipeline_failed', notes=f'{type(exc).__name__}: {exc}')
+              raise
           PYTHON
-        continue-on-error: true
 
       - name: Export best bets for Sports Picks Grid
+        if: always()
         run: python scripts/export_best_bets.py
         env:
           PYTHONPATH: ${{ github.workspace }}
 
       - name: Validate dashboard export
+        if: always()
         run: |
           python - <<'PY'
           import json
@@ -123,7 +141,7 @@ jobs:
           meta = payload.get("meta", {})
           bets = payload.get("bets")
           assert meta.get("sport") == "MLB"
-          assert meta.get("status") in {"ok", "no_picks", "off_season", "pipeline_pending", "pipeline_failed"}
+          assert meta.get("status") in {"ok", "no_picks", "off_season", "pipeline_pending", "pipeline_failed", "no_qualifying_picks", "no_games"}
           assert meta.get("tier_definition") == "edge-v1"
           assert isinstance(bets, list)
           datetime.fromisoformat(meta["generated_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -135,9 +153,18 @@ jobs:
           PY
 
       - name: Commit best_bets_today.json
+        if: always()
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name  "github-actions[bot]"
           git add data_files/best_bets_today.json
           git diff --staged --quiet || git commit -m "chore: update best_bets_today [skip ci]"
-          git push
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push raced with another writer; rebasing before retry ${attempt}/3..."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "Unable to push generated artifact after 3 attempts."
+          exit 1

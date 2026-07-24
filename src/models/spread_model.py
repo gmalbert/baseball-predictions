@@ -88,6 +88,7 @@ def train_spread_model(
         )),
     ])
     model.fit(X_train, y_train)
+    model.feature_cols_ = list(feature_cols)
 
     y_prob = model.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= 0.5).astype(int)
@@ -132,7 +133,7 @@ def train_spread_model(
 def predict_spread(
     model_or_path: "Pipeline | str | Path",
     game_features: pd.DataFrame,
-    feature_cols: list[str] = SPREAD_FEATURES,
+    feature_cols: list[str] | None = None,
     spread_price_col: str | None = None,
 ) -> pd.DataFrame:
     """Generate run-line cover predictions for a set of games.
@@ -150,10 +151,20 @@ def predict_spread(
     if not isinstance(model_or_path, Pipeline):
         model_or_path = joblib.load(model_or_path)
 
+    feature_cols = list(getattr(model_or_path, "feature_cols_", feature_cols or SPREAD_FEATURES))
+    expected = getattr(model_or_path, "n_features_in_", None)
+    if expected is not None and expected != len(feature_cols):
+        raise ValueError(
+            f"Model expects {expected} features but inference contract provides {len(feature_cols)}; retrain the model."
+        )
+    missing = [col for col in feature_cols if col not in game_features.columns]
+    if missing:
+        raise ValueError(f"Live feature schema missing {len(missing)} model columns: {missing}")
+
     X = game_features[feature_cols].fillna(0).values
     probs_cover = model_or_path.predict_proba(X)[:, 1]
 
-    id_cols = [c for c in ("date", "hometeam", "visteam") if c in game_features.columns]
+    id_cols = [c for c in ("game_id", "date", "hometeam", "visteam") if c in game_features.columns]
     results = game_features[id_cols].copy().reset_index(drop=True)
     results["pred_cover_prob"]      = probs_cover.round(4)
     results["pred_no_cover_prob"]   = (1 - probs_cover).round(4)
@@ -162,9 +173,9 @@ def predict_spread(
     )
 
     if spread_price_col and spread_price_col in game_features.columns:
-        results["edge"] = game_features[spread_price_col].apply(
-            lambda odds: calculate_edge(float(probs_cover[results.index]), odds)
-            if pd.notna(odds) else np.nan
-        )
+        results["edge"] = [
+            calculate_edge(float(prob), odds) if pd.notna(odds) else np.nan
+            for prob, odds in zip(probs_cover, game_features[spread_price_col].to_numpy())
+        ]
 
     return results
