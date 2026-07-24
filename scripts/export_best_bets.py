@@ -4,6 +4,7 @@ Reads data_files/processed/picks_today.csv and its metadata (written by src/pick
 and writes data_files/best_bets_today.json in the unified Sports Picks Grid schema.
 """
 import json
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -16,12 +17,19 @@ META_PATH = Path("data_files/processed/picks_today.meta.json")
 
 
 def _write(bets: list, notes: str = "", status: str | None = None, target_date: str | None = None, picks_count: int | None = None) -> None:
+    if status is None:
+        status = "ok" if bets else "no_picks"
     payload: dict = {
         "meta": {
             "sport": SPORT,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "model_version": MODEL_VERSION,
             "season": SEASON,
+            "status": status,
+            "tier_definition": "edge-v1",
+            "lookahead_days": 0,
+            "source_commit": os.getenv("GITHUB_SHA", ""),
+            "total_bets": len(bets),
         },
         "bets": bets,
     }
@@ -61,7 +69,7 @@ def main() -> None:
     # Baseball season: March–November
     month = today.month
     if not (3 <= month <= 11):
-        _write([], "MLB off-season", status="no_games", target_date=str(today), picks_count=0)
+        _write([], "MLB off-season", status="off_season", target_date=str(today), picks_count=0)
         return
 
     if not SRC_PATH.exists():

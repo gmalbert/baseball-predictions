@@ -127,6 +127,31 @@ jobs:
         run: python scripts/export_best_bets.py
         env:
           PYTHONPATH: ${{ github.workspace }}
+
+      - name: Validate dashboard export
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          path = Path("data_files/best_bets_today.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          meta = payload.get("meta", {})
+          bets = payload.get("bets")
+          assert meta.get("sport") == "MLB"
+          assert meta.get("status") in {"ok", "no_picks", "off_season", "pipeline_pending", "pipeline_failed", "no_qualifying_picks", "no_games"}
+          assert meta.get("tier_definition") == "edge-v1"
+          assert isinstance(bets, list)
+          datetime.fromisoformat(meta["generated_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
+          required = {"game_date", "game", "pick", "confidence", "edge", "odds", "tier"}
+          for index, bet in enumerate(bets):
+              missing = required - bet.keys()
+              assert not missing, f"bets[{index}] missing {sorted(missing)}"
+          print(f"Validated {len(bets)} MLB bets with status {meta['status']}")
+          PY
+
       - name: Commit best_bets_today.json
         if: always()
         run: |
