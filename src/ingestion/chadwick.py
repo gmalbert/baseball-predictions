@@ -12,6 +12,7 @@ Usage:
     registry = load_player_registry()   # full DataFrame
     mlbam_id = retro_to_mlbam("kersc001", registry=registry)  # -> 477132
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,17 +57,14 @@ def load_player_registry(force_refresh: bool = False) -> pd.DataFrame:
     if not force_refresh and _REGISTRY_PATH.exists():
         try:
             return pd.read_parquet(_REGISTRY_PATH)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     logger.info("Fetching Chadwick Bureau player registry from GitHub…")
     try:
-        shards = [
-            pd.read_csv(url, dtype=str, low_memory=False)
-            for url in CHADWICK_URLS
-        ]
+        shards = [pd.read_csv(url, dtype=str, low_memory=False) for url in CHADWICK_URLS]
         df = pd.concat(shards, ignore_index=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Failed to fetch Chadwick registry: %s", exc)
         return pd.DataFrame(columns=_KEEP_COLS)
 
@@ -83,9 +81,10 @@ def load_player_registry(force_refresh: bool = False) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Drop rows that lack both a Retrosheet ID and an MLBAM ID
-    mask = df.get("key_retro", pd.Series(dtype=str)).notna() | df.get(
-        "key_mlbam", pd.Series(dtype=float)
-    ).notna()
+    mask = (
+        df.get("key_retro", pd.Series(dtype=str)).notna()
+        | df.get("key_mlbam", pd.Series(dtype=float)).notna()
+    )
     df = df[mask].reset_index(drop=True)
 
     _PROCESSED.mkdir(parents=True, exist_ok=True)

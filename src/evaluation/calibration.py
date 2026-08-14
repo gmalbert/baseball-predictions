@@ -38,18 +38,24 @@ def calibration_report(
         mask = bin_indices == i
         if mask.sum() == 0:
             continue
-        rows.append({
-            "bin": f"{bin_edges[i]:.1f}-{bin_edges[i + 1]:.1f}",
-            "count": int(mask.sum()),
-            "avg_predicted": float(y_prob[mask].mean()),
-            "actual_rate": float(y_true[mask].mean()),
-            "calibration_error": float(abs(y_prob[mask].mean() - y_true[mask].mean())),
-        })
+        rows.append(
+            {
+                "bin": f"{bin_edges[i]:.1f}-{bin_edges[i + 1]:.1f}",
+                "count": int(mask.sum()),
+                "avg_predicted": float(y_prob[mask].mean()),
+                "actual_rate": float(y_true[mask].mean()),
+                "calibration_error": float(abs(y_prob[mask].mean() - y_true[mask].mean())),
+            }
+        )
 
     report = pd.DataFrame(rows)
 
     brier = brier_score_loss(y_true, y_prob)
-    ece = report["calibration_error"].mean() if not report.empty else float("nan")
+    ece = (
+        float(np.average(report["calibration_error"], weights=report["count"]))
+        if not report.empty
+        else float("nan")
+    )
 
     print(f"\n=== Calibration Report: {model_name} ===")
     print(f"Brier Score: {brier:.4f}")

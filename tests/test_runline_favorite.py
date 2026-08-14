@@ -1,5 +1,6 @@
 import sys
 import types
+
 import pandas as pd
 
 # Provide a minimal stub for external dependency `statsapi` so tests can import

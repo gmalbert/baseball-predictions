@@ -1,0 +1,49 @@
+{
+  "bankroll": "1000",
+  "snapshots": [
+    {
+      "snapshot_id": "snapshot_fixture_1",
+      "game_id": "game_fixture_1",
+      "as_of_time": "2026-08-10T16:00:00Z",
+      "snapshot_type": "morning",
+      "feature_set_version": "v2",
+      "features": {"home_strength": 0.12},
+      "source_watermarks": {"schedule": "2026-08-10T15:30:00Z"},
+      "row_hash": "fixture-row-hash",
+      "build_run_id": "fixture-build",
+      "quality_status": "passed"
+    }
+  ],
+  "quotes": [
+    {
+      "quote_id": "quote_fixture_1",
+      "game_id": "game_fixture_1",
+      "bookmaker_id": "fixture_book",
+      "market_id": "moneyline_full_game",
+      "selection": "away",
+      "price_decimal": "2.10",
+      "price_american": 110,
+      "observed_at": "2026-08-10T15:59:00Z",
+      "is_live": false,
+      "is_suspended": false,
+      "is_actionable": true
+    }
+  ],
+  "predictions": [
+    {
+      "prediction_id": "prediction_fixture_1",
+      "snapshot_id": "snapshot_fixture_1",
+      "game_id": "game_fixture_1",
+      "model_run_id": "fixture_model_v2",
+      "market_id": "moneyline_full_game",
+      "selection": "away",
+      "probability_raw": 0.62,
+      "probability": 0.62,
+      "probability_low": 0.58,
+      "probability_high": 0.66,
+      "predicted_at": "2026-08-10T16:00:00Z",
+      "feature_row_hash": "fixture-row-hash",
+      "calibration_version": "fixture-calibration"
+    }
+  ]
+}

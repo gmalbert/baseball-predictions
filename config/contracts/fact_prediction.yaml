@@ -1,0 +1,16 @@
+dataset: fact_prediction
+version: 2.0.0
+primary_key: [prediction_id]
+required:
+  prediction_id: string
+  snapshot_id: string
+  game_id: string
+  model_run_id: string
+  market_id: string
+  selection: string
+  probability: float64
+  predicted_at: timestamp[us, tz=UTC]
+checks:
+  - expression: probability >= 0 and probability <= 1
+  - unique: [snapshot_id, model_run_id, market_id, selection]
+

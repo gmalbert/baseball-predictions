@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-extras --dev
+      - run: uv run ruff format --check src tests scripts predictions.py pages page_utils.py
+      - run: uv run ruff check src tests scripts predictions.py pages page_utils.py
+      - name: Type-check high-risk v2 contracts and settlement core
+        run: >-
+          uv run mypy --ignore-missing-imports
+          src/contracts src/markets src/decisions
+          src/backtesting/settlement.py src/backtesting/execution.py
+          src/backtesting/quotes.py src/backtesting/portfolio.py
+          src/monitoring src/pick6
+      - run: uv run python -m compileall -q src tests scripts predictions.py pages page_utils.py
+      - run: uv run pytest -q --cov=src --cov-report=term-missing
+      - run: uv run python scripts/check_docs_links.py
+      - name: Deterministic archived replay
+        run: >-
+          uv run python -m src.pipeline.replay
+          --target-date 2026-08-10
+          --as-of 2026-08-10T16:00:00Z
+          --fixture tests/fixtures/replay_small.json
+      - name: Audit locked dependencies
+        run: |
+          uv export --locked --all-extras --no-hashes --output-file /tmp/baseball-requirements.txt
+          uvx pip-audit -r /tmp/baseball-requirements.txt

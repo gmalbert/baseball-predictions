@@ -1,0 +1,12 @@
+dataset: fact_game
+version: 1.0.0
+primary_key: [game_id]
+required:
+  game_id: string
+  season: int32
+  game_type: string
+  scheduled_start_utc: timestamp[us, tz=UTC]
+  venue_id: string
+  home_team_id: string
+  away_team_id: string
+  ruleset_version: string

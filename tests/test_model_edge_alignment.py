@@ -1,6 +1,7 @@
+import sys
+
 import numpy as np
 import pandas as pd
-import sys
 from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 
@@ -28,21 +29,25 @@ def _model():
 
 
 def _games():
-    return pd.DataFrame({
-        "game_id": ["g1", "g2"],
-        "date": ["2026-07-23", "2026-07-23"],
-        "hometeam": ["Home 1", "Home 2"],
-        "visteam": ["Away 1", "Away 2"],
-        "feature": [0.1, 0.2],
-        "home_moneyline": [-110, 120],
-        "away_moneyline": [100, -130],
-        "home_spread_price": [-110, -105],
-        "over_price": [-110, -115],
-    })
+    return pd.DataFrame(
+        {
+            "game_id": ["g1", "g2"],
+            "date": ["2026-07-23", "2026-07-23"],
+            "hometeam": ["Home 1", "Home 2"],
+            "visteam": ["Away 1", "Away 2"],
+            "feature": [0.1, 0.2],
+            "home_moneyline": [-110, 120],
+            "away_moneyline": [100, -130],
+            "home_spread_price": [-110, -105],
+            "over_price": [-110, -115],
+        }
+    )
 
 
 def test_moneyline_edges_align_one_probability_per_game():
-    result = predict_moneyline(_model(), _games(), home_ml_col="home_moneyline", away_ml_col="away_moneyline")
+    result = predict_moneyline(
+        _model(), _games(), home_ml_col="home_moneyline", away_ml_col="away_moneyline"
+    )
     assert len(result["edge_home"]) == 2
     assert result["edge_home"].notna().all()
     assert result["edge_away"].notna().all()

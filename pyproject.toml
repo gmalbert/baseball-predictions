@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "baseball-predictions"
+version = "2.0.0"
+description = "Point-in-time MLB forecasting, market replay, and risk platform"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "apscheduler>=3.10,<4",
+  "duckdb>=1.4,<2",
+  "joblib>=1.4,<2",
+  "MLB-StatsAPI>=1.7,<1.10",
+  "numpy>=2.2,<3",
+  "pandas>=2.2,<3",
+  "plotly>=5.18,<7",
+  "pybaseball>=2.2.7,<3",
+  "pyarrow>=19,<24",
+  "pydantic>=2.10,<3",
+  "python-dotenv>=1,<2",
+  "PyYAML>=6.0,<7",
+  "requests>=2.31,<3",
+  "scikit-learn>=1.7,<1.9",
+  "scipy>=1.14,<2",
+  "statsmodels>=0.14,<1",
+  "streamlit>=1.57,<2",
+]
+
+[project.optional-dependencies]
+models = ["xgboost>=3,<4", "lightgbm>=4.6,<5"]
+ocr = ["Pillow>=10,<13", "pytesseract>=0.3.10,<1"]
+api = ["fastapi>=0.116,<1", "uvicorn>=0.35,<1"]
+dev = [
+  "mypy>=1.15,<2",
+  "playwright>=1.54,<2",
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+markers = [
+  "integration: deterministic integration and replay tests",
+  "ui: browser-based UI tests",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E402"] # Streamlit pages intentionally adjust sys.path before local imports.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["src"]

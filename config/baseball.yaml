@@ -1,0 +1,29 @@
+environment: production
+timezone: America/New_York
+data_schema_version: 2.0.0
+feature_set_version: mlb_game_v2
+decision_policy_version: conservative_v1
+snapshots:
+  - name: morning
+    local_time: "09:00"
+  - name: pregame_30m
+    offset_from_start_minutes: -30
+quotes:
+  max_age_seconds: 180
+  min_books_for_consensus: 3
+models:
+  moneyline: ml_joint_score_v2
+  totals: ml_joint_score_v2
+quality:
+  fail_on_unknown_team: true
+  max_missing_critical_fraction: 0.0
+bankroll:
+  kelly_fraction: 0.25
+  max_bet_fraction: 0.010
+  max_game_fraction: 0.020
+  max_team_fraction: 0.025
+  max_market_fraction: 0.035
+  max_factor_fraction: 0.025
+  max_day_fraction: 0.050
+  stop_loss_fraction: 0.035
+  max_open_bets: 20

@@ -10,6 +10,7 @@ Usage:
     guts = load_fg_guts()          # DataFrame with one row per season
     row  = get_guts_for_year(2024) # Series: wBB, wHBP, w1B, w2B, w3B, wHR, cFIP …
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,8 +39,16 @@ _GUTS_FALLBACK = pd.DataFrame(
         (2026, 0.70, 0.73, 0.89, 1.26, 1.59, 2.07, 1.195, 0.317, 3.180),
     ],
     columns=[
-        "season", "wBB", "wHBP", "w1B", "w2B", "w3B", "wHR",
-        "woba_scale", "lg_woba", "cFIP",
+        "season",
+        "wBB",
+        "wHBP",
+        "w1B",
+        "w2B",
+        "w3B",
+        "wHR",
+        "woba_scale",
+        "lg_woba",
+        "cFIP",
     ],
 )
 
@@ -83,8 +92,18 @@ def fetch_fg_guts(save: bool = True) -> pd.DataFrame:
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
 
-        for col in ["season", "wBB", "wHBP", "w1B", "w2B", "w3B", "wHR",
-                    "woba_scale", "lg_woba", "cFIP"]:
+        for col in [
+            "season",
+            "wBB",
+            "wHBP",
+            "w1B",
+            "w2B",
+            "w3B",
+            "wHR",
+            "woba_scale",
+            "lg_woba",
+            "cFIP",
+        ]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -99,32 +118,33 @@ def fetch_fg_guts(save: bool = True) -> pd.DataFrame:
             raise ValueError(f"Fetched Guts! table missing critical columns: {missing_cols}")
 
         # Add optional columns if absent (back-fills from fallback)
-        all_cols = ["season"] + required_critical + ["woba_scale", "lg_woba"]
         for col in ("woba_scale", "lg_woba"):
             if col not in df.columns:
                 fb_col = _GUTS_FALLBACK[col] if col in _GUTS_FALLBACK else None
                 if fb_col is not None:
                     # fill from fallback via season key
-                    df = df.merge(
-                        _GUTS_FALLBACK[["season", col]], on="season", how="left"
-                    )
+                    df = df.merge(_GUTS_FALLBACK[["season", col]], on="season", how="left")
                 else:
                     df[col] = float("nan")
 
         if save:
             _PROCESSED.mkdir(parents=True, exist_ok=True)
-            save_cols = ["season"] + required_critical + [
-                c for c in ("woba_scale", "lg_woba") if c in df.columns
-            ]
+            save_cols = (
+                ["season"]
+                + required_critical
+                + [c for c in ("woba_scale", "lg_woba") if c in df.columns]
+            )
             df[save_cols].to_parquet(_PROCESSED / "fg_guts.parquet", index=False)
             logger.info("Saved fg_guts.parquet (%d seasons)", len(df))
 
-        out_cols = ["season"] + required_critical + [
-            c for c in ("woba_scale", "lg_woba") if c in df.columns
-        ]
+        out_cols = (
+            ["season"]
+            + required_critical
+            + [c for c in ("woba_scale", "lg_woba") if c in df.columns]
+        )
         return df[out_cols].reset_index(drop=True)
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("fg_guts live fetch failed (%s); using built-in fallback constants", exc)
         return _GUTS_FALLBACK.copy()
 
@@ -140,7 +160,7 @@ def load_fg_guts() -> pd.DataFrame:
     if path.exists():
         try:
             return pd.read_parquet(path)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return fetch_fg_guts(save=True)
 

@@ -1,0 +1,13 @@
+dataset: raw_observation
+version: 1.0.0
+primary_key: [observation_id]
+required:
+  observation_id: string
+  source: string
+  observed_at: timestamp[us, tz=UTC]
+  ingested_at: timestamp[us, tz=UTC]
+  payload_sha256: string
+  payload_uri: string
+  ingestion_run_id: string
+checks:
+  - expression: observed_at <= ingested_at

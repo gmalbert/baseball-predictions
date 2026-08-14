@@ -11,7 +11,6 @@ from datetime import datetime
 
 from .config import config
 
-
 # approximate month range for the MLB regular season + postseason
 # (spring training starts in February, but we don't need data then)
 SEASON_MONTHS = set(range(3, 12))  # March (3) through November (11)

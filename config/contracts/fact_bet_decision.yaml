@@ -1,0 +1,22 @@
+dataset: fact_bet_decision
+version: 2.0.0
+primary_key: [decision_id]
+required:
+  decision_id: string
+  prediction_id: string
+  quote_id: string
+  game_id: string
+  market_id: string
+  selection: string
+  decided_at: timestamp[us, tz=UTC]
+  fair_probability: float64
+  market_probability: float64
+  edge: float64
+  expected_value: float64
+  recommended_stake: decimal128
+  policy_version: string
+  action: string
+checks:
+  - expression: fair_probability >= 0 and fair_probability <= 1
+  - expression: market_probability >= 0 and market_probability <= 1
+  - expression: recommended_stake >= 0

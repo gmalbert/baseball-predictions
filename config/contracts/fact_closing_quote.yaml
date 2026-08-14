@@ -1,0 +1,7 @@
+dataset: fact_closing_quote
+version: 1.0.0
+primary_key: [execution_id, close_definition]
+required:
+  execution_id: string
+  quote_id: string
+  close_definition: string

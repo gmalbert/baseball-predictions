@@ -10,25 +10,24 @@ the probability estimates are still useful for:
 
 Target: home_win (1 = home team won, 0 = away team won)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
-    classification_report,
     log_loss,
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
 
-from .features import MONEYLINE_FEATURES, implied_probability, calculate_edge
+from .features import MONEYLINE_FEATURES, calculate_edge
+from .manifest import LoadedModel
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 MODEL_DIR.mkdir(exist_ok=True)
@@ -39,6 +38,7 @@ MODEL_PATH = MODEL_DIR / "moneyline_xgb_v1.joblib"
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
 
 def train_moneyline_model(
     features_df: pd.DataFrame,
@@ -59,9 +59,7 @@ def train_moneyline_model(
                         test_df (actual vs predicted for the test set).
     """
     feature_cols = [c for c in feature_cols if c in features_df.columns]
-    df = features_df.sort_values("date").dropna(
-        subset=["home_win"] + feature_cols
-    )
+    df = features_df.sort_values("date").dropna(subset=["home_win"] + feature_cols)
 
     X = df[feature_cols].values
     y = df["home_win"].astype(int).values
@@ -70,21 +68,28 @@ def train_moneyline_model(
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
 
-    model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("xgb", XGBClassifier(
-            n_estimators=300,
-            max_depth=5,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_weight=5,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            eval_metric="logloss",
-            random_state=42,
-        )),
-    ])
+    from xgboost import XGBClassifier
+
+    model = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "xgb",
+                XGBClassifier(
+                    n_estimators=300,
+                    max_depth=5,
+                    learning_rate=0.05,
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    min_child_weight=5,
+                    reg_alpha=0.1,
+                    reg_lambda=1.0,
+                    eval_metric="logloss",
+                    random_state=42,
+                ),
+            ),
+        ]
+    )
     model.fit(X_train, y_train)
     model.feature_cols_ = list(feature_cols)
 
@@ -92,35 +97,41 @@ def train_moneyline_model(
     y_pred = (y_prob >= 0.5).astype(int)
 
     metrics = {
-        "accuracy":    float(accuracy_score(y_test, y_pred)),
+        "accuracy": float(accuracy_score(y_test, y_pred)),
         "brier_score": float(brier_score_loss(y_test, y_prob)),
-        "log_loss":    float(log_loss(y_test, y_prob)),
-        "roc_auc":     float(roc_auc_score(y_test, y_prob)),
+        "log_loss": float(log_loss(y_test, y_prob)),
+        "roc_auc": float(roc_auc_score(y_test, y_prob)),
     }
 
-    importances = pd.DataFrame({
-        "feature":    feature_cols,
-        "importance": model.named_steps["xgb"].feature_importances_,
-    }).sort_values("importance", ascending=False).reset_index(drop=True)
+    importances = (
+        pd.DataFrame(
+            {
+                "feature": feature_cols,
+                "importance": model.named_steps["xgb"].feature_importances_,
+            }
+        )
+        .sort_values("importance", ascending=False)
+        .reset_index(drop=True)
+    )
 
     # Attach predictions to the test slice for backtest display
-    test_df = df.iloc[split_idx:][
-        ["date", "hometeam", "visteam", "hruns", "vruns", "home_win"]
-    ].copy().reset_index(drop=True)
+    test_df = (
+        df.iloc[split_idx:][["date", "hometeam", "visteam", "hruns", "vruns", "home_win"]]
+        .copy()
+        .reset_index(drop=True)
+    )
     test_df["pred_prob"] = y_prob
-    test_df["pred_win"]  = y_pred
-    test_df["correct"]   = (test_df["pred_win"] == test_df["home_win"]).astype(int)
-
-    joblib.dump(model, MODEL_PATH)
+    test_df["pred_win"] = y_pred
+    test_df["correct"] = (test_df["pred_win"] == test_df["home_win"]).astype(int)
 
     return {
-        "model":        model,
-        "metrics":      metrics,
-        "importances":  importances,
+        "model": model,
+        "metrics": metrics,
+        "importances": importances,
         "feature_cols": feature_cols,
-        "test_df":      test_df,
-        "train_size":   len(X_train),
-        "test_size":    len(X_test),
+        "test_df": test_df,
+        "train_size": len(X_train),
+        "test_size": len(X_test),
     }
 
 
@@ -128,8 +139,9 @@ def train_moneyline_model(
 # Inference
 # ---------------------------------------------------------------------------
 
+
 def predict_moneyline(
-    model_or_path: "Pipeline | str | Path",
+    model_or_path: Pipeline | str | Path,
     game_features: pd.DataFrame,
     feature_cols: list[str] | None = None,
     home_ml_col: str | None = None,
@@ -149,10 +161,17 @@ def predict_moneyline(
         DataFrame with columns: hometeam, visteam, pred_home_win_prob,
         pred_away_win_prob, pick, [edge_home, edge_away] if odds provided.
     """
+    loaded_bundle = None
     if not isinstance(model_or_path, Pipeline):
-        model_or_path = joblib.load(model_or_path)
+        artifact_path = Path(model_or_path)
+        loaded_bundle = LoadedModel(artifact_path, artifact_path.with_suffix(".manifest.json"))
+        model_or_path = loaded_bundle.estimator
 
-    feature_cols = list(getattr(model_or_path, "feature_cols_", feature_cols or MONEYLINE_FEATURES))
+    feature_cols = (
+        [spec.name for spec in loaded_bundle.manifest.features]
+        if loaded_bundle
+        else list(getattr(model_or_path, "feature_cols_", feature_cols or MONEYLINE_FEATURES))
+    )
     expected = getattr(model_or_path, "n_features_in_", None)
     if expected is not None and expected != len(feature_cols):
         raise ValueError(
@@ -162,14 +181,20 @@ def predict_moneyline(
     if missing:
         raise ValueError(f"Live feature schema missing {len(missing)} model columns: {missing}")
 
-    X = game_features[feature_cols].fillna(0).values
-    probs_home = model_or_path.predict_proba(X)[:, 1]
+    if loaded_bundle:
+        probs_home = loaded_bundle.predict_probability(game_features).to_numpy()
+    else:
+        X = game_features[feature_cols].fillna(0).values
+        probs_home = model_or_path.predict_proba(X)[:, 1]
 
     id_cols = [c for c in ("game_id", "date", "hometeam", "visteam") if c in game_features.columns]
     results = game_features[id_cols].copy().reset_index(drop=True)
     results["pred_home_win_prob"] = probs_home.round(4)
     results["pred_away_win_prob"] = (1 - probs_home).round(4)
     results["pick"] = np.where(probs_home >= 0.5, "Home", "Away")
+    results["selection"] = np.where(probs_home >= 0.5, "home", "away")
+    results["pick_side"] = results["selection"]
+    results["pick_prob"] = np.where(probs_home >= 0.5, probs_home, 1 - probs_home).round(4)
 
     if home_ml_col and home_ml_col in game_features.columns:
         results["edge_home"] = [
@@ -182,5 +207,21 @@ def predict_moneyline(
             calculate_edge(float(prob), odds) if pd.notna(odds) else np.nan
             for prob, odds in zip(probs_away, game_features[away_ml_col].to_numpy())
         ]
+
+    if {"edge_home", "edge_away"}.issubset(results.columns):
+        results["edge"] = np.where(
+            results["selection"] == "home", results["edge_home"], results["edge_away"]
+        )
+    if (
+        home_ml_col
+        and away_ml_col
+        and home_ml_col in game_features.columns
+        and away_ml_col in game_features.columns
+    ):
+        results["price_american"] = np.where(
+            results["selection"] == "home",
+            game_features[home_ml_col].to_numpy(),
+            game_features[away_ml_col].to_numpy(),
+        )
 
     return results

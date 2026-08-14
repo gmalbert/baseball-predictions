@@ -8,11 +8,15 @@ def test_chadwick_uses_split_people_shards(tmp_path, monkeypatch):
     monkeypatch.setattr(
         chadwick.pd,
         "read_csv",
-        lambda url, **kwargs: pd.DataFrame([{
-            "key_uuid": url.rsplit("/", 1)[-1],
-            "key_retro": "player1",
-            "key_mlbam": "123",
-        }]),
+        lambda url, **kwargs: pd.DataFrame(
+            [
+                {
+                    "key_uuid": url.rsplit("/", 1)[-1],
+                    "key_retro": "player1",
+                    "key_mlbam": "123",
+                }
+            ]
+        ),
     )
 
     result = chadwick.load_player_registry(force_refresh=True)
@@ -26,7 +30,9 @@ def test_chadwick_uses_split_people_shards(tmp_path, monkeypatch):
 
 def test_chadwick_fetch_failure_returns_empty_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(chadwick, "_REGISTRY_PATH", tmp_path / "player_registry.parquet")
-    monkeypatch.setattr(chadwick.pd, "read_csv", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("404")))
+    monkeypatch.setattr(
+        chadwick.pd, "read_csv", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("404"))
+    )
 
     result = chadwick.load_player_registry(force_refresh=True)
 

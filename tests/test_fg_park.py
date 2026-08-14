@@ -18,8 +18,24 @@ def test_guts_park_factor_parser_preserves_handedness(monkeypatch):
     result = fg_park._fetch_fg_guts_park_factors(2026)
 
     assert result.to_dict("records") == [
-        {"team": "Angels", "hand": "L", "season": 2026, "pf_basic": 98,
-         "pf_hr": 104, "pf_1b": 98, "pf_2b": 99, "pf_3b": 100},
-        {"team": "Angels", "hand": "R", "season": 2026, "pf_basic": 98,
-         "pf_hr": 108, "pf_1b": 101, "pf_2b": 102, "pf_3b": 103},
+        {
+            "team": "Angels",
+            "hand": "L",
+            "season": 2026,
+            "pf_basic": 98,
+            "pf_hr": 104,
+            "pf_1b": 98,
+            "pf_2b": 99,
+            "pf_3b": 100,
+        },
+        {
+            "team": "Angels",
+            "hand": "R",
+            "season": 2026,
+            "pf_basic": 98,
+            "pf_hr": 108,
+            "pf_1b": 101,
+            "pf_2b": 102,
+            "pf_3b": 103,
+        },
     ]
