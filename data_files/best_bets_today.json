@@ -1,16 +1,16 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-08-14T12:29:34.316310+00:00",
+    "generated_at": "2026-08-15T12:12:29.625017+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "status": "no_qualifying_picks",
+    "status": "pipeline_pending",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "f6a7114282cd27dae850302782af0224d0dbec25",
+    "source_commit": "c3291c670e755e37f9a54442f37841511273f480",
     "total_bets": 0,
-    "notes": "No qualifying MLB picks for 2026-08-14",
-    "target_date": "2026-08-14",
+    "notes": "Canonical pick snapshot not found — daily pipeline may not have run yet",
+    "target_date": "2026-08-15",
     "picks_count": 0
   },
   "bets": []
