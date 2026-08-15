@@ -1,15 +1,15 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-08-15T19:40:50.939880+00:00",
+    "generated_at": "2026-08-15T20:21:55.818981+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "status": "pipeline_pending",
+    "status": "pipeline_failed",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "c1505a9e34c52d452ff5da9a1edea55824144af9",
+    "source_commit": "d960a004e8faef2bee4e4f29739faccb35b98b8f",
     "total_bets": 0,
-    "notes": "Canonical pick snapshot not found — daily pipeline may not have run yet",
+    "notes": "ArrowInvalid: (\"Could not convert '0' with type str: tried to convert to int64\", 'Conversion failed for column away_score with type object')",
     "target_date": "2026-08-15",
     "picks_count": 0
   },
