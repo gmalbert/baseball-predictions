@@ -33,6 +33,41 @@ from page_utils import (
     add_betting_oracle_footer,
 )
 
+# v2 engine: one coherent score distribution per matchup, so moneyline,
+# run-line, and totals reconcile to the same joint distribution.
+from src.models.score_distribution import ScoreDistribution, independent_poisson_score_distribution
+
+
+def _coherent_game_distribution(
+    home_prob: float, home_rate: float = 4.5, away_rate: float = 4.5
+) -> ScoreDistribution:
+    """Build a coherent score distribution anchored to a target home win prob.
+
+    The legacy heuristic gives a single home-moneyline probability from team
+    strength.  This helper turns that into a full joint score distribution
+    (independent Poisson per side) whose moneyline matches the target, so the
+    run-line and totals probabilities come from the same distribution instead
+    of separate ad-hoc formulas.
+
+    ``home_rate``/``away_rate`` are the base run-expectancy anchors (league
+    average ~4.5 R/G); the helper scales them to hit the requested moneyline.
+    """
+    home_prob = max(0.02, min(0.98, home_prob))
+    # Solve for the home/away rate ratio that produces the target home ML.
+    # Equal rates give ~0.45 (Poisson ties go to neither side); a stronger
+    # home team (higher home_rate relative to away) raises home ML above that,
+    # and vice versa.  The ratio moves the moneyline; the anchor keeps the
+    # expected total near league average.
+    lo, hi = 0.05, 20.0
+    for _ in range(40):
+        mid = (lo + hi) / 2.0
+        dist = independent_poisson_score_distribution(away_rate, home_rate * mid)
+        if dist.home_moneyline() > home_prob:
+            hi = mid
+        else:
+            lo = mid
+    return independent_poisson_score_distribution(away_rate, home_rate * ((lo + hi) / 2.0))
+
 st.set_page_config(
     page_title="Betting Cleanup - MLB Predictions",
     page_icon="⚾",
@@ -112,6 +147,9 @@ def _build_game_recs(
     away_full = g.get("away_name", "")
     home_prob = _estimate_win_prob(home_full, away_full, standings)
     away_prob = 1.0 - home_prob
+    # v2 engine: one coherent joint distribution drives moneyline, run line,
+    # and totals so the three markets reconcile by construction.
+    dist = _coherent_game_distribution(home_prob)
     recs: dict = {}
 
     if not espn_game:
@@ -152,7 +190,7 @@ def _build_game_recs(
 
     def _parse_american(raw) -> int | None:
         try:
-            return int(str(raw).replace("+", ""))
+            return int(float(str(raw).replace("+", "")))
         except (ValueError, TypeError):
             return None
 
@@ -175,13 +213,11 @@ def _build_game_recs(
         home_favorite = False
 
     if home_favorite:
-        home_rl = home_prob ** 1.4
-        away_rl = 1.0 - home_rl
+        home_rl, away_rl, _push_rl = dist.run_line_probabilities(-1.5)
         home_pick = f"{_short(home_full)} −1.5"
         away_pick = f"{_short(away_full)} +1.5"
     else:
-        away_rl = away_prob ** 1.4
-        home_rl = 1.0 - away_rl
+        away_rl, home_rl, _push_rl = dist.run_line_probabilities(-1.5)
         home_pick = f"{_short(home_full)} +1.5"
         away_pick = f"{_short(away_full)} −1.5"
 
@@ -225,17 +261,22 @@ def _build_game_recs(
     ou_raw   = espn_game.get("over_under")
     ov_raw   = espn_game.get("over_odds")
     un_raw   = espn_game.get("under_odds")
+    # v2 fail-closed: an edge requires both prices; missing odds means no O/U
+    # recommendation, not a fabricated 50/50 edge.
     if ou_raw and ov_raw and un_raw:
         try:
             posted    = float(ou_raw)
             exp_total = _get_rs_g(home_full, hist_stnd) + _get_rs_g(away_full, hist_stnd)
-            diff      = exp_total - posted
-            over_prob = max(0.20, min(0.80, 0.50 + diff * 0.06))
-            under_prob = 1.0 - over_prob
+            # v2 engine: over/under/push from the same joint distribution,
+            # clamped to the same 0.20-0.80 band the legacy heuristic used so
+            # missing odds cannot produce absurd edges.
+            raw_over, raw_under, push_prob = dist.total_probabilities(posted)
+            over_prob = max(0.20, min(0.80, raw_over))
+            under_prob = max(0.20, min(0.80, raw_under))
 
             def _parse(raw) -> int | None:
                 try:
-                    return int(str(raw).replace("+", ""))
+                    return int(float(str(raw).replace("+", "")))
                 except (ValueError, TypeError):
                     return None
 
@@ -246,8 +287,10 @@ def _build_game_recs(
 
             ov_int  = _parse(ov_raw)
             un_int  = _parse(un_raw)
-            impl_ov = _american_to_implied_prob(ov_int)  if ov_int  else 0.5
-            impl_un = _american_to_implied_prob(un_int) if un_int else 0.5
+            if ov_int is None or un_int is None:
+                raise ValueError("missing over/under price")
+            impl_ov = _american_to_implied_prob(ov_int)
+            impl_un = _american_to_implied_prob(un_int)
 
             recs["ou"] = {
                 "posted":    posted,
@@ -360,8 +403,8 @@ def home_page() -> None:
         st.markdown(f"### 🎯 Today's Games & Betting Recommendations")
         st.caption(
             "Win probability: current-season W% logistic model (+4% HFA). "
-            "Run line: empirical cover-rate model. "
-            "O/U: historical RS/G vs posted total. "
+            "Run line and O/U: derived from one coherent score distribution "
+            "anchored to the same moneyline, so all three markets reconcile. "
             "✅ BET = edge > 3% &nbsp;·&nbsp; ➡ LEAN = 0–3% &nbsp;·&nbsp; ⛔ PASS = negative edge."
         )
 
