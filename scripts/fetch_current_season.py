@@ -20,8 +20,8 @@ import datetime
 import time
 from pathlib import Path
 
-import requests
 import pandas as pd
+import requests
 import statsapi
 
 CURRENT_YEAR = datetime.date.today().year
@@ -35,7 +35,7 @@ RATE_SLEEP = 0.15
 ABBREV_TO_RETRO: dict[str, str] = {
     "ATH": "ATH",
     "ATL": "ATL",
-    "AZ":  "ARI",
+    "AZ": "ARI",
     "BAL": "BAL",
     "BOS": "BOS",
     "CHC": "CHN",
@@ -45,7 +45,7 @@ ABBREV_TO_RETRO: dict[str, str] = {
     "CWS": "CHA",
     "DET": "DET",
     "HOU": "HOU",
-    "KC":  "KCA",
+    "KC": "KCA",
     "LAA": "ANA",
     "LAD": "LAN",
     "MIA": "MIA",
@@ -55,11 +55,11 @@ ABBREV_TO_RETRO: dict[str, str] = {
     "NYY": "NYA",
     "PHI": "PHI",
     "PIT": "PIT",
-    "SD":  "SDN",
+    "SD": "SDN",
     "SEA": "SEA",
-    "SF":  "SFN",
+    "SF": "SFN",
     "STL": "SLN",
-    "TB":  "TBA",
+    "TB": "TBA",
     "TEX": "TEX",
     "TOR": "TOR",
     "WSH": "WAS",
@@ -77,6 +77,7 @@ OPENING_DAYS: dict[int, str] = {
 # Retry wrapper
 # ---------------------------------------------------------------------------
 
+
 def _statsapi_retry(fn, *args, max_retries: int = 5, base_delay: float = 5.0, **kwargs):
     """Call fn(*args, **kwargs) with exponential-backoff retry on transient errors."""
     for attempt in range(max_retries):
@@ -89,7 +90,7 @@ def _statsapi_retry(fn, *args, max_retries: int = 5, base_delay: float = 5.0, **
         ) as exc:
             if attempt == max_retries - 1:
                 raise
-            wait = base_delay * (2 ** attempt)
+            wait = base_delay * (2**attempt)
             print(
                 f"MLB API transient error ({exc}); "
                 f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_retries})..."
@@ -100,6 +101,7 @@ def _statsapi_retry(fn, *args, max_retries: int = 5, base_delay: float = 5.0, **
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_team_map(season: int) -> dict[int, str]:
     """Return {mlbam_team_id: retrosheet_3_letter_code}."""
@@ -140,12 +142,14 @@ def _last_word(s: str | None) -> str:
 # Schedule
 # ---------------------------------------------------------------------------
 
+
 def _fetch_schedule(season: int, season_start: str) -> list[dict]:
     """Return all completed regular-season games from Opening Day through today."""
     today = datetime.date.today().isoformat()
     raw = _statsapi_retry(statsapi.schedule, start_date=season_start, end_date=today, sportId=1)
     completed = [
-        g for g in raw
+        g
+        for g in raw
         if g.get("game_type") == "R"
         and g.get("status") in ("Final", "Game Over", "Completed Early")
     ]
@@ -157,26 +161,27 @@ def _fetch_schedule(season: int, season_start: str) -> list[dict]:
 # Boxscore processing
 # ---------------------------------------------------------------------------
 
+
 def _process_game(
     game: dict,
     team_map: dict[int, str],
 ) -> tuple[list[dict], list[dict]]:
     """Return (batter_rows, pitcher_rows) for one completed game."""
-    game_pk   = game["game_id"]
-    date_str  = game["game_date"]          # "2026-03-27"
-    date_int  = int(date_str.replace("-", ""))
-    game_num  = game.get("game_num", 1) or 1
-    home_id   = game["home_id"]
-    away_id   = game["away_id"]
+    game_pk = game["game_id"]
+    date_str = game["game_date"]  # "2026-03-27"
+    date_int = int(date_str.replace("-", ""))
+    game_num = game.get("game_num", 1) or 1
+    home_id = game["home_id"]
+    away_id = game["away_id"]
 
     home_retro = team_map.get(home_id, "UNK")
     away_retro = team_map.get(away_id, "UNK")
-    gid        = f"{home_retro}{date_int}{game_num - 1}"
+    gid = f"{home_retro}{date_int}{game_num - 1}"
 
     home_score = _safe_int(game.get("home_score"))
     away_score = _safe_int(game.get("away_score"))
-    home_win   = 1 if home_score > away_score else 0
-    away_win   = 1 if away_score > home_score else 0
+    home_win = 1 if home_score > away_score else 0
+    away_win = 1 if away_score > home_score else 0
 
     try:
         bs = _statsapi_retry(statsapi.boxscore_data, game_pk)
@@ -184,7 +189,7 @@ def _process_game(
         print(f"  Warning: boxscore_data({game_pk}) failed — {exc}")
         return [], []
 
-    batter_rows:  list[dict] = []
+    batter_rows: list[dict] = []
     pitcher_rows: list[dict] = []
 
     # ── Batters ───────────────────────────────────────────────────────────────
@@ -201,32 +206,32 @@ def _process_game(
             bb = _safe_int(batter.get("bb"))
             batter_rows.append(
                 {
-                    "gid":     gid,
-                    "id":      str(pid),
-                    "team":    team_retro,
-                    "b_pa":    ab + bb,          # estimate: AB + BB (HBP/SF not exposed)
-                    "b_ab":    ab,
-                    "b_r":     _safe_int(batter.get("r")),
-                    "b_h":     _safe_int(batter.get("h")),
-                    "b_d":     _safe_int(batter.get("doubles")),
-                    "b_t":     _safe_int(batter.get("triples")),
-                    "b_hr":    _safe_int(batter.get("hr")),
-                    "b_rbi":   _safe_int(batter.get("rbi")),
-                    "b_w":     bb,
-                    "b_k":     _safe_int(batter.get("k")),
-                    "b_sb":    _safe_int(batter.get("sb")),
-                    "b_hbp":   0,
-                    "b_sf":    0,
-                    "date":    date_int,
+                    "gid": gid,
+                    "id": str(pid),
+                    "team": team_retro,
+                    "b_pa": ab + bb,  # estimate: AB + BB (HBP/SF not exposed)
+                    "b_ab": ab,
+                    "b_r": _safe_int(batter.get("r")),
+                    "b_h": _safe_int(batter.get("h")),
+                    "b_d": _safe_int(batter.get("doubles")),
+                    "b_t": _safe_int(batter.get("triples")),
+                    "b_hr": _safe_int(batter.get("hr")),
+                    "b_rbi": _safe_int(batter.get("rbi")),
+                    "b_w": bb,
+                    "b_k": _safe_int(batter.get("k")),
+                    "b_sb": _safe_int(batter.get("sb")),
+                    "b_hbp": 0,
+                    "b_sf": 0,
+                    "date": date_int,
                     "vishome": vishome,
-                    "opp":     opp_retro,
-                    "win":     win,
-                    "loss":    1 - win,
+                    "opp": opp_retro,
+                    "win": win,
+                    "loss": 1 - win,
                 }
             )
 
     # ── Pitchers ──────────────────────────────────────────────────────────────
-    win_last  = _last_word(game.get("winning_pitcher"))
+    win_last = _last_word(game.get("winning_pitcher"))
     loss_last = _last_word(game.get("losing_pitcher"))
     save_last = _last_word(game.get("save_pitcher"))
 
@@ -235,42 +240,39 @@ def _process_game(
         ("home", home_id, away_retro, "h", home_win),
     ):
         team_retro = team_map.get(team_id, "UNK")
-        pitchers   = [
-            p for p in bs.get(f"{side}Pitchers", [])
-            if p.get("personId", 0) != 0
-        ]
+        pitchers = [p for p in bs.get(f"{side}Pitchers", []) if p.get("personId", 0) != 0]
         n = len(pitchers)
         for idx, pitcher in enumerate(pitchers):
-            pid   = pitcher.get("personId", 0)
+            pid = pitcher.get("personId", 0)
             pname = _last_word(pitcher.get("name", ""))
             pitcher_rows.append(
                 {
-                    "gid":      gid,
-                    "id":       str(pid),
-                    "team":     team_retro,
+                    "gid": gid,
+                    "id": str(pid),
+                    "team": team_retro,
                     "p_ipouts": _ip_to_outs(pitcher.get("ip", "0")),
-                    "p_bfp":    0,   # not in standard boxscore
-                    "p_h":      _safe_int(pitcher.get("h")),
-                    "p_hr":     _safe_int(pitcher.get("hr")),
-                    "p_r":      _safe_int(pitcher.get("r")),
-                    "p_er":     _safe_int(pitcher.get("er")),
-                    "p_w":      _safe_int(pitcher.get("bb")),
-                    "p_iw":     0,
-                    "p_k":      _safe_int(pitcher.get("k")),
-                    "p_hbp":    0,
-                    "p_wp":     0,
-                    "p_bk":     0,
-                    "p_gs":     1 if idx == 0 else 0,   # first listed = starter
-                    "p_gf":     1 if idx == n - 1 else 0,
-                    "p_cg":     1 if n == 1 else 0,
-                    "wp":       1 if pname == win_last  and win_last  else 0,
-                    "lp":       1 if pname == loss_last and loss_last else 0,
-                    "save":     1 if pname == save_last and save_last else 0,
-                    "date":     date_int,
-                    "vishome":  vishome,
-                    "opp":      opp_retro,
-                    "win":      win,
-                    "loss":     1 - win,
+                    "p_bfp": 0,  # not in standard boxscore
+                    "p_h": _safe_int(pitcher.get("h")),
+                    "p_hr": _safe_int(pitcher.get("hr")),
+                    "p_r": _safe_int(pitcher.get("r")),
+                    "p_er": _safe_int(pitcher.get("er")),
+                    "p_w": _safe_int(pitcher.get("bb")),
+                    "p_iw": 0,
+                    "p_k": _safe_int(pitcher.get("k")),
+                    "p_hbp": 0,
+                    "p_wp": 0,
+                    "p_bk": 0,
+                    "p_gs": 1 if idx == 0 else 0,  # first listed = starter
+                    "p_gf": 1 if idx == n - 1 else 0,
+                    "p_cg": 1 if n == 1 else 0,
+                    "wp": 1 if pname == win_last and win_last else 0,
+                    "lp": 1 if pname == loss_last and loss_last else 0,
+                    "save": 1 if pname == save_last and save_last else 0,
+                    "date": date_int,
+                    "vishome": vishome,
+                    "opp": opp_retro,
+                    "win": win,
+                    "loss": 1 - win,
                 }
             )
 
@@ -281,34 +283,37 @@ def _process_game(
 # Player registry
 # ---------------------------------------------------------------------------
 
+
 def _build_gameinfo(games: list[dict], team_map: dict[int, str], season: int) -> pd.DataFrame:
     """Build a gameinfo-compatible DataFrame from the schedule list."""
     rows: list[dict] = []
     for game in games:
-        date_str  = game["game_date"]
-        date_int  = int(date_str.replace("-", ""))
-        game_num  = game.get("game_num", 1) or 1
-        home_id   = game["home_id"]
-        away_id   = game["away_id"]
+        date_str = game["game_date"]
+        date_int = int(date_str.replace("-", ""))
+        game_num = game.get("game_num", 1) or 1
+        home_id = game["home_id"]
+        away_id = game["away_id"]
         home_retro = team_map.get(home_id, "UNK")
         away_retro = team_map.get(away_id, "UNK")
-        gid        = f"{home_retro}{date_int}{game_num - 1}"
+        gid = f"{home_retro}{date_int}{game_num - 1}"
         home_score = _safe_int(game.get("home_score"))
         away_score = _safe_int(game.get("away_score"))
         wteam = home_retro if home_score > away_score else away_retro
         lteam = away_retro if home_score > away_score else home_retro
-        rows.append({
-            "gid":      gid,
-            "date":     date_int,
-            "season":   season,
-            "visteam":  away_retro,
-            "hometeam": home_retro,
-            "vruns":    away_score,
-            "hruns":    home_score,
-            "wteam":    wteam,
-            "lteam":    lteam,
-            "gametype": "R",
-        })
+        rows.append(
+            {
+                "gid": gid,
+                "date": date_int,
+                "season": season,
+                "visteam": away_retro,
+                "hometeam": home_retro,
+                "vruns": away_score,
+                "hruns": home_score,
+                "wteam": wteam,
+                "lteam": lteam,
+                "gametype": "R",
+            }
+        )
     return pd.DataFrame(rows).drop_duplicates(subset=["gid"])
 
 
@@ -358,34 +363,42 @@ def _build_allplayers(
     season: int,
 ) -> pd.DataFrame:
     """Build an allplayers-compatible DataFrame by querying the MLB people API."""
-    all_ids = sorted(
-        int(x) for x in set(bat_df["id"]) | set(pit_df["id"])
-        if str(x).isdigit()
-    )
+    all_ids = sorted(int(x) for x in set(bat_df["id"]) | set(pit_df["id"]) if str(x).isdigit())
 
     rows: list[dict] = []
     for i in range(0, len(all_ids), 50):
-        batch   = all_ids[i : i + 50]
+        batch = all_ids[i : i + 50]
         ids_str = ",".join(str(x) for x in batch)
         try:
             result = _statsapi_retry(statsapi.get, "people", {"personIds": ids_str})
             for person in result.get("people", []):
                 rows.append(
                     {
-                        "id":     str(person.get("id", "")),
-                        "last":   person.get("lastName", ""),
-                        "first":  person.get("firstName", ""),
-                        "bat":    person.get("batSide", {}).get("code", ""),
-                        "throw":  person.get("pitchHand", {}).get("code", ""),
-                        "team":   "",
-                        "g":      0,
-                        "g_p":    0, "g_sp": 0, "g_rp": 0, "g_c":  0,
-                        "g_1b":   0, "g_2b": 0, "g_3b": 0, "g_ss": 0,
-                        "g_lf":   0, "g_cf": 0, "g_rf": 0, "g_of": 0,
-                        "g_dh":   0, "g_ph": 0, "g_pr": 0,
+                        "id": str(person.get("id", "")),
+                        "last": person.get("lastName", ""),
+                        "first": person.get("firstName", ""),
+                        "bat": person.get("batSide", {}).get("code", ""),
+                        "throw": person.get("pitchHand", {}).get("code", ""),
+                        "team": "",
+                        "g": 0,
+                        "g_p": 0,
+                        "g_sp": 0,
+                        "g_rp": 0,
+                        "g_c": 0,
+                        "g_1b": 0,
+                        "g_2b": 0,
+                        "g_3b": 0,
+                        "g_ss": 0,
+                        "g_lf": 0,
+                        "g_cf": 0,
+                        "g_rf": 0,
+                        "g_of": 0,
+                        "g_dh": 0,
+                        "g_ph": 0,
+                        "g_pr": 0,
                         "first_g": 0,
-                        "last_g":  0,
-                        "season":  season,
+                        "last_g": 0,
+                        "season": season,
                     }
                 )
         except Exception as exc:
@@ -412,7 +425,7 @@ def _build_allplayers(
     g_bat = bat_df.groupby("id").size().rename("g_bat")
     g_pit = pit_df.groupby("id").size().rename("g_pit")
     df = df.set_index("id").join(g_bat, how="left").join(g_pit, how="left").reset_index()
-    df["g"]   = df["g_bat"].fillna(0).astype(int) + df["g_pit"].fillna(0).astype(int)
+    df["g"] = df["g_bat"].fillna(0).astype(int) + df["g_pit"].fillna(0).astype(int)
     df["g_p"] = df["g_pit"].fillna(0).astype(int)
     df = df.drop(columns=["g_bat", "g_pit"], errors="ignore")
 
@@ -421,16 +434,38 @@ def _build_allplayers(
         df = df.drop(columns=["first_g", "last_g"], errors="ignore")
         df = df.merge(
             bat_df.groupby("id")["date"].agg(first_g="min", last_g="max").reset_index(),
-            on="id", how="left",
+            on="id",
+            how="left",
         )
         df["first_g"] = df["first_g"].fillna(0).astype(int)
-        df["last_g"]  = df["last_g"].fillna(0).astype(int)
+        df["last_g"] = df["last_g"].fillna(0).astype(int)
 
     ordered_cols = [
-        "id", "last", "first", "bat", "throw", "team",
-        "g", "g_p", "g_sp", "g_rp", "g_c",
-        "g_1b", "g_2b", "g_3b", "g_ss", "g_lf", "g_cf", "g_rf", "g_of",
-        "g_dh", "g_ph", "g_pr", "first_g", "last_g", "season",
+        "id",
+        "last",
+        "first",
+        "bat",
+        "throw",
+        "team",
+        "g",
+        "g_p",
+        "g_sp",
+        "g_rp",
+        "g_c",
+        "g_1b",
+        "g_2b",
+        "g_3b",
+        "g_ss",
+        "g_lf",
+        "g_cf",
+        "g_rf",
+        "g_of",
+        "g_dh",
+        "g_ph",
+        "g_pr",
+        "first_g",
+        "last_g",
+        "season",
     ]
     return df[[c for c in ordered_cols if c in df.columns]]
 
@@ -438,6 +473,7 @@ def _build_allplayers(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -449,16 +485,16 @@ def main() -> None:
         default=CURRENT_YEAR,
         help=f"Season year (default: {CURRENT_YEAR})",
     )
-    args   = parser.parse_args()
+    args = parser.parse_args()
     season = args.season
 
     season_start = OPENING_DAYS.get(season, f"{season}-03-27")
     print(f"=== Fetching {season} season data (from {season_start}) ===\n")
 
     team_map = _build_team_map(season)
-    games    = _fetch_schedule(season, season_start)
+    games = _fetch_schedule(season, season_start)
 
-    all_batters:  list[dict] = []
+    all_batters: list[dict] = []
     all_pitchers: list[dict] = []
 
     for idx, game in enumerate(games, 1):

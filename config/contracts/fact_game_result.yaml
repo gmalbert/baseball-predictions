@@ -1,0 +1,13 @@
+dataset: fact_game_result
+version: 1.0.0
+primary_key: [game_id, result_version]
+required:
+  game_id: string
+  home_runs: int16
+  away_runs: int16
+  innings_played: int16
+  completed_at: timestamp[us, tz=UTC]
+  official_at: timestamp[us, tz=UTC]
+  result_version: int32
+checks:
+  - expression: home_runs >= 0 and away_runs >= 0 and innings_played >= 0

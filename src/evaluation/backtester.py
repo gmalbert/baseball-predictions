@@ -6,9 +6,9 @@ Critical: Uses time-series splits to prevent look-ahead bias.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -20,14 +20,14 @@ class BetResult:
 
     game_id: int | str
     date: date
-    pick_type: str    # 'underdog', 'spread', 'over_under'
-    pick_value: str   # 'NYY +150', 'Over 8.5', etc.
+    pick_type: str  # 'underdog', 'spread', 'over_under'
+    pick_value: str  # 'NYY +150', 'Over 8.5', etc.
     predicted_prob: float
     confidence_score: float
-    confidence: str   # 'high', 'medium', 'low'
+    confidence: str  # 'high', 'medium', 'low'
     edge: float
     american_odds: int
-    result: str       # 'win', 'loss', 'push'
+    result: str  # 'win', 'loss', 'push'
     profit_units: float  # +1.50, -1.00, 0.00
 
 
@@ -167,7 +167,13 @@ def walk_forward_backtest(
 
         for i, (idx, row) in enumerate(test_df.iterrows()):
             prob = float(probs[i])
-            odds = int(row.get(odds_col, -110))
+            raw_odds = row.get(odds_col)
+            # Missing historical prices are ineligible, never synthetic -110.
+            if pd.isna(raw_odds):
+                continue
+            odds = int(raw_odds)
+            if odds == 0:
+                continue
 
             # Edge = our probability minus market implied probability
             if odds < 0:
@@ -196,19 +202,21 @@ def walk_forward_backtest(
             else:
                 conf_label = "low"
 
-            all_bets.append(BetResult(
-                game_id=row.get("game_id", idx),
-                date=row.get("date"),
-                pick_type=pick_type,
-                pick_value=f"Pred={prob:.3f}",
-                predicted_prob=prob,
-                confidence_score=conf_score,
-                confidence=conf_label,
-                edge=edge,
-                american_odds=odds,
-                result=result,
-                profit_units=profit,
-            ))
+            all_bets.append(
+                BetResult(
+                    game_id=row.get("game_id", idx),
+                    date=row.get("date"),
+                    pick_type=pick_type,
+                    pick_value=f"Pred={prob:.3f}",
+                    predicted_prob=prob,
+                    confidence_score=conf_score,
+                    confidence=conf_label,
+                    edge=edge,
+                    american_odds=odds,
+                    result=result,
+                    profit_units=profit,
+                )
+            )
 
         start += step_size
 

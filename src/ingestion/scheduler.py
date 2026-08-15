@@ -6,19 +6,19 @@ Run directly to start the blocking scheduler:
 """
 
 import logging
-
-from datetime import date, datetime
-from requests.exceptions import HTTPError
+from datetime import date, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from requests.exceptions import HTTPError
 
-from .mlb_stats import fetch_todays_probable_pitchers
-from .odds import fetch_current_odds
-from .season import in_season
 from src.ingestion.odds import get_consensus_line
 from src.picks.afternoon_refresh import afternoon_picks_refresh
 from src.picks.daily_pipeline import _save_consensus_snapshot
+
+from .mlb_stats import fetch_schedule_for_date, fetch_todays_probable_pitchers
+from .odds import fetch_current_odds
+from .season import in_season
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,31 +70,47 @@ def afternoon_update() -> None:
 
 
 @scheduler.scheduled_job(CronTrigger(hour=1, minute=0, timezone="America/New_York"))
-def overnight_results() -> None:
+def overnight_results(target_date: date | None = None) -> None:
     """1 AM ET – Pull final scores, update model results, refresh reference data."""
     if not in_season():
         logger.info("Out of season – skipping overnight results collection")
         return
 
-    logger.info("Running overnight results collection...")
-    # TODO: fetch final scores, update pick results, recalculate metrics
+    target_date = target_date or (date.today() - timedelta(days=1))
+    logger.info("Running overnight results collection for %s...", target_date)
+    from src.backtesting.daily_settlement import settle_pending_from_schedule
+    from src.backtesting.ledger import LedgerRepository
+
+    from .config import config
+
+    schedule = fetch_schedule_for_date(target_date)
+    ledger_root = config.project_root / "data" / "gold" / "bet_ledger"
+    quote_path = config.project_root / "data" / "gold" / "bet_ledger" / "quotes.parquet"
+    settled = settle_pending_from_schedule(
+        ledger=LedgerRepository(ledger_root),
+        quote_path=quote_path,
+        schedule=schedule,
+        target_date=target_date,
+    )
+    logger.info("Settled %d canonical executions", settled)
 
     # Refresh slow-changing reference data: fg_guts, park factors, Chadwick registry
     logger.info("Refreshing reference data (fg_guts, park factors, player registry)…")
+    from src.ingestion.chadwick import load_player_registry
     from src.ingestion.fg_guts import fetch_fg_guts
     from src.ingestion.fg_park import fetch_fg_park_factors
-    from src.ingestion.chadwick import load_player_registry
+
     try:
         fetch_fg_guts(save=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("fg_guts refresh failed: %s", exc)
     try:
         fetch_fg_park_factors(date.today().year, save=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("fg_park refresh failed: %s", exc)
     try:
         load_player_registry(force_refresh=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("player_registry refresh failed: %s", exc)
     logger.info("Reference data refresh complete")
 

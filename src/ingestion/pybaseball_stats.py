@@ -2,15 +2,16 @@
 """Pull batting and pitching stats via pybaseball (FanGraphs + Statcast)."""
 
 import calendar
+from time import sleep
+
 import pandas as pd
 from pybaseball import (
     batting_stats,
     pitching_stats,
+    statcast,
     team_batting,
     team_pitching,
-    statcast,
 )
-from time import sleep
 
 from .config import config
 

@@ -1,0 +1,15 @@
+dataset: fact_bet_execution
+version: 2.0.0
+primary_key: [execution_id]
+required:
+  execution_id: string
+  decision_id: string
+  quote_id: string
+  bookmaker_id: string
+  placed_at: timestamp[us, tz=UTC]
+  accepted_price_decimal: decimal128
+  stake: decimal128
+  status: string
+checks:
+  - expression: accepted_price_decimal > 1
+  - expression: stake > 0

@@ -12,6 +12,7 @@ Schedule suggestion (crontab / Windows Task Scheduler):
     Run at 5:00 AM ET daily during April–October.
     Games finish by ~1 AM ET; Savant updates by ~4 AM ET.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,10 +24,10 @@ from pathlib import Path
 # Allow imports from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.ingestion.config import config
 from src.ingestion.savant_leaderboard import (
     download_savant_leaderboard,
 )
-from src.ingestion.config import config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,11 +84,14 @@ def nightly_refresh(year: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nightly Savant leaderboard refresh")
     parser.add_argument(
-        "--year", type=int, default=date.today().year,
+        "--year",
+        type=int,
+        default=date.today().year,
         help="Season to refresh (default: current year)",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Run even outside the normal season window",
     )
     args = parser.parse_args()

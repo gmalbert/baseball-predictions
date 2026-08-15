@@ -12,6 +12,7 @@ pitchers).  Results are saved as:
 
 Adjust the `YEARS` list if you need a different range.
 """
+
 from __future__ import annotations
 
 import sys

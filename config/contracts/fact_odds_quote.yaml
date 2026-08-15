@@ -1,0 +1,20 @@
+dataset: fact_odds_quote
+version: 1.0.0
+primary_key: [quote_id]
+partition_by: [observed_date, bookmaker_id]
+required:
+  quote_id: string
+  game_id: string
+  bookmaker_id: string
+  market_id: string
+  selection: string
+  price_decimal: float64
+  observed_at: timestamp[us, tz=UTC]
+checks:
+  - expression: price_decimal > 1.0
+  - expression: observed_at <= ingested_at
+  - unique: [game_id, bookmaker_id, market_id, selection, point, observed_at]
+freshness:
+  warn_after: 10m
+  fail_after: 30m
+

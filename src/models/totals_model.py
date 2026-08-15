@@ -15,25 +15,24 @@ Weather features (temp, windspeed) are especially informative here.
 
 Target: went_over
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
-    classification_report,
     log_loss,
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
 
 from .features import TOTALS_FEATURES, implied_probability
+from .manifest import LoadedModel
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 MODEL_DIR.mkdir(exist_ok=True)
@@ -42,6 +41,7 @@ MODEL_DIR.mkdir(exist_ok=True)
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
 
 def train_totals_model(
     features_df: pd.DataFrame,
@@ -61,9 +61,7 @@ def train_totals_model(
         dict with keys: model, metrics, importances, feature_cols, test_df.
     """
     feature_cols = [c for c in feature_cols if c in features_df.columns]
-    df = features_df.sort_values("date").dropna(
-        subset=["went_over"] + feature_cols
-    )
+    df = features_df.sort_values("date").dropna(subset=["went_over"] + feature_cols)
 
     X = df[feature_cols].values
     y = df["went_over"].astype(int).values
@@ -74,6 +72,7 @@ def train_totals_model(
 
     if use_lightgbm:
         from lightgbm import LGBMClassifier
+
         classifier = LGBMClassifier(
             n_estimators=300,
             max_depth=5,
@@ -86,8 +85,9 @@ def train_totals_model(
             random_state=42,
             verbose=-1,
         )
-        suffix = "lgbm"
     else:
+        from xgboost import XGBClassifier
+
         classifier = XGBClassifier(
             n_estimators=300,
             max_depth=5,
@@ -100,12 +100,12 @@ def train_totals_model(
             eval_metric="logloss",
             random_state=42,
         )
-        suffix = "xgb"
-
-    model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", classifier),
-    ])
+    model = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("clf", classifier),
+        ]
+    )
     model.fit(X_train, y_train)
     model.feature_cols_ = list(feature_cols)
 
@@ -113,41 +113,56 @@ def train_totals_model(
     y_pred = (y_prob >= 0.5).astype(int)
 
     metrics = {
-        "accuracy":    float(accuracy_score(y_test, y_pred)),
+        "accuracy": float(accuracy_score(y_test, y_pred)),
         "brier_score": float(brier_score_loss(y_test, y_prob)),
-        "log_loss":    float(log_loss(y_test, y_prob)),
-        "roc_auc":     float(roc_auc_score(y_test, y_prob)),
+        "log_loss": float(log_loss(y_test, y_prob)),
+        "roc_auc": float(roc_auc_score(y_test, y_prob)),
     }
 
     clf = model.named_steps["clf"]
-    importances = pd.DataFrame({
-        "feature":    feature_cols,
-        "importance": clf.feature_importances_,
-    }).sort_values("importance", ascending=False).reset_index(drop=True)
+    importances = (
+        pd.DataFrame(
+            {
+                "feature": feature_cols,
+                "importance": clf.feature_importances_,
+            }
+        )
+        .sort_values("importance", ascending=False)
+        .reset_index(drop=True)
+    )
 
-    test_df = df.iloc[split_idx:][
-        ["date", "hometeam", "visteam",
-         "hruns", "vruns", "total_runs", "exp_total", "went_over"]
-    ].copy().reset_index(drop=True)
-    test_df["pred_prob_over"]  = y_prob
+    test_df = (
+        df.iloc[split_idx:][
+            [
+                "date",
+                "hometeam",
+                "visteam",
+                "hruns",
+                "vruns",
+                "total_runs",
+                "exp_total",
+                "went_over",
+            ]
+        ]
+        .copy()
+        .reset_index(drop=True)
+    )
+    test_df["pred_prob_over"] = y_prob
     test_df["pred_prob_under"] = 1 - y_prob
-    test_df["pick_side"]       = np.where(y_prob >= 0.5, "Over", "Under")
-    test_df["correct"]         = (
-        (test_df["pick_side"] == "Over")  == (test_df["went_over"] == 1)
-    ).astype(int)
-
-    model_path = MODEL_DIR / f"totals_{suffix}_v1.joblib"
-    joblib.dump(model, model_path)
+    test_df["pick_side"] = np.where(y_prob >= 0.5, "Over", "Under")
+    test_df["correct"] = ((test_df["pick_side"] == "Over") == (test_df["went_over"] == 1)).astype(
+        int
+    )
 
     return {
-        "model":        model,
-        "metrics":      metrics,
-        "importances":  importances,
+        "model": model,
+        "metrics": metrics,
+        "importances": importances,
         "feature_cols": feature_cols,
-        "test_df":      test_df,
-        "train_size":   len(X_train),
-        "test_size":    len(X_test),
-        "model_path":   model_path,
+        "test_df": test_df,
+        "train_size": len(X_train),
+        "test_size": len(X_test),
+        "model_path": None,
     }
 
 
@@ -155,8 +170,9 @@ def train_totals_model(
 # Inference
 # ---------------------------------------------------------------------------
 
+
 def predict_totals(
-    model_or_path: "Pipeline | str | Path",
+    model_or_path: Pipeline | str | Path,
     game_features: pd.DataFrame,
     feature_cols: list[str] | None = None,
     over_price_col: str | None = None,
@@ -175,10 +191,17 @@ def predict_totals(
         DataFrame with: hometeam, visteam, exp_total, pred_prob_over,
         pred_prob_under, pick_side, pick_prob, [edge] if odds provided.
     """
+    loaded_bundle = None
     if not isinstance(model_or_path, Pipeline):
-        model_or_path = joblib.load(model_or_path)
+        artifact_path = Path(model_or_path)
+        loaded_bundle = LoadedModel(artifact_path, artifact_path.with_suffix(".manifest.json"))
+        model_or_path = loaded_bundle.estimator
 
-    feature_cols = list(getattr(model_or_path, "feature_cols_", feature_cols or TOTALS_FEATURES))
+    feature_cols = (
+        [spec.name for spec in loaded_bundle.manifest.features]
+        if loaded_bundle
+        else list(getattr(model_or_path, "feature_cols_", feature_cols or TOTALS_FEATURES))
+    )
     expected = getattr(model_or_path, "n_features_in_", None)
     if expected is not None and expected != len(feature_cols):
         raise ValueError(
@@ -188,24 +211,51 @@ def predict_totals(
     if missing:
         raise ValueError(f"Live feature schema missing {len(missing)} model columns: {missing}")
 
-    X = game_features[feature_cols].fillna(0).values
-    probs_over = model_or_path.predict_proba(X)[:, 1]
+    if loaded_bundle:
+        probs_over = loaded_bundle.predict_probability(game_features).to_numpy()
+    else:
+        X = game_features[feature_cols].fillna(0).values
+        probs_over = model_or_path.predict_proba(X)[:, 1]
 
-    id_cols = [c for c in ("game_id", "date", "hometeam", "visteam", "exp_total")
-               if c in game_features.columns]
+    id_cols = [
+        c
+        for c in ("game_id", "date", "hometeam", "visteam", "exp_total")
+        if c in game_features.columns
+    ]
     results = game_features[id_cols].copy().reset_index(drop=True)
-    results["pred_prob_over"]  = probs_over.round(4)
+    results["pred_prob_over"] = probs_over.round(4)
     results["pred_prob_under"] = (1 - probs_over).round(4)
-    results["pick_side"]       = np.where(probs_over >= 0.5, "Over", "Under")
-    results["pick_prob"]       = np.where(
-        probs_over >= 0.5, probs_over, 1 - probs_over
-    ).round(4)
+    results["pick_side"] = np.where(probs_over >= 0.5, "Over", "Under")
+    results["selection"] = np.where(probs_over >= 0.5, "over", "under")
+    results["pick_prob"] = np.where(probs_over >= 0.5, probs_over, 1 - probs_over).round(4)
 
     if over_price_col and over_price_col in game_features.columns:
         results["edge_over"] = [
-            float(prob) - implied_probability(int(odds))
-            if pd.notna(odds) else np.nan
+            float(prob) - implied_probability(int(odds)) if pd.notna(odds) else np.nan
             for prob, odds in zip(probs_over, game_features[over_price_col].to_numpy())
         ]
+
+    if under_price_col and under_price_col in game_features.columns:
+        results["edge_under"] = [
+            float(prob) - implied_probability(int(odds)) if pd.notna(odds) else np.nan
+            for prob, odds in zip(1 - probs_over, game_features[under_price_col].to_numpy())
+        ]
+    if "edge_over" in results:
+        results["edge"] = results["edge_over"]
+        if "edge_under" in results:
+            results["edge"] = np.where(
+                results["selection"] == "over", results["edge_over"], results["edge_under"]
+            )
+    if over_price_col and over_price_col in game_features.columns:
+        under_values = (
+            game_features[under_price_col].to_numpy()
+            if under_price_col and under_price_col in game_features
+            else np.full(len(game_features), np.nan)
+        )
+        results["price_american"] = np.where(
+            results["selection"] == "over", game_features[over_price_col].to_numpy(), under_values
+        )
+    if "exp_total" in results:
+        results["point"] = results["exp_total"]
 
     return results

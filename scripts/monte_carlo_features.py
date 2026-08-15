@@ -12,6 +12,7 @@ Usage:
     python scripts/monte_carlo_features.py
     python scripts/monte_carlo_features.py --trials 2000 --top-pct 10
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,11 +21,10 @@ import sys
 import warnings
 from collections import Counter
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import log_loss, roc_auc_score
+from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -58,61 +58,123 @@ TARGETS = {
 
 BATTER_CANDIDATE_FEATURES: list[str] = [
     # Expected stats
-    "xba", "xslg", "xwoba", "xobp", "xiso",
-    "wobacon", "xwobacon", "bacon", "xbacon",
-    "xbadiff", "xslgdiff", "wobadiff",
+    "xba",
+    "xslg",
+    "xwoba",
+    "xobp",
+    "xiso",
+    "wobacon",
+    "xwobacon",
+    "bacon",
+    "xbacon",
+    "xbadiff",
+    "xslgdiff",
+    "wobadiff",
     # Bat tracking
-    "avg_swing_speed", "fast_swing_rate",
-    "squared_up_contact", "squared_up_swing",
-    "avg_swing_length", "swords",
-    "attack_angle", "ideal_angle_rate",
+    "avg_swing_speed",
+    "fast_swing_rate",
+    "squared_up_contact",
+    "squared_up_swing",
+    "avg_swing_length",
+    "swords",
+    "attack_angle",
+    "ideal_angle_rate",
     # Batted ball quality
-    "exit_velocity_avg", "launch_angle_avg", "sweet_spot_percent",
-    "barrel_batted_rate", "solidcontact_percent",
-    "flareburner_percent", "poorlyunder_percent",
-    "poorlytopped_percent", "poorlyweak_percent",
-    "hard_hit_percent", "avg_best_speed", "avg_hyper_speed",
+    "exit_velocity_avg",
+    "launch_angle_avg",
+    "sweet_spot_percent",
+    "barrel_batted_rate",
+    "solidcontact_percent",
+    "flareburner_percent",
+    "poorlyunder_percent",
+    "poorlytopped_percent",
+    "poorlyweak_percent",
+    "hard_hit_percent",
+    "avg_best_speed",
+    "avg_hyper_speed",
     # Plate discipline
-    "k_percent", "bb_percent",
-    "z_swing_percent", "z_swing_miss_percent",
-    "oz_swing_percent", "oz_swing_miss_percent",
-    "oz_contact_percent", "iz_contact_percent",
-    "meatball_swing_percent", "meatball_percent",
-    "edge_percent", "whiff_percent", "swing_percent",
+    "k_percent",
+    "bb_percent",
+    "z_swing_percent",
+    "z_swing_miss_percent",
+    "oz_swing_percent",
+    "oz_swing_miss_percent",
+    "oz_contact_percent",
+    "iz_contact_percent",
+    "meatball_swing_percent",
+    "meatball_percent",
+    "edge_percent",
+    "whiff_percent",
+    "swing_percent",
     "f_strike_percent",
     # Distribution
-    "pull_percent", "straightaway_percent", "opposite_percent",
-    "groundballs_percent", "flyballs_percent",
-    "linedrives_percent", "popups_percent",
+    "pull_percent",
+    "straightaway_percent",
+    "opposite_percent",
+    "groundballs_percent",
+    "flyballs_percent",
+    "linedrives_percent",
+    "popups_percent",
     # Speed
-    "sprint_speed", "hp_to_1b",
+    "sprint_speed",
+    "hp_to_1b",
 ]
 
 PITCHER_CANDIDATE_FEATURES: list[str] = [
     # Expected stats (pitcher-allowed)
-    "xba", "xslg", "xwoba", "xobp", "xiso", "xera",
-    "wobacon", "xwobacon", "xbadiff", "xslgdiff", "wobadiff",
+    "xba",
+    "xslg",
+    "xwoba",
+    "xobp",
+    "xiso",
+    "xera",
+    "wobacon",
+    "xwobacon",
+    "xbadiff",
+    "xslgdiff",
+    "wobadiff",
     # Batted ball quality allowed
-    "exit_velocity_avg", "launch_angle_avg", "sweet_spot_percent",
-    "barrel_batted_rate", "solidcontact_percent",
-    "hard_hit_percent", "avg_best_speed", "avg_hyper_speed",
+    "exit_velocity_avg",
+    "launch_angle_avg",
+    "sweet_spot_percent",
+    "barrel_batted_rate",
+    "solidcontact_percent",
+    "hard_hit_percent",
+    "avg_best_speed",
+    "avg_hyper_speed",
     # Plate discipline induced
-    "k_percent", "bb_percent",
-    "z_swing_percent", "z_swing_miss_percent",
-    "oz_swing_percent", "oz_swing_miss_percent",
-    "oz_contact_percent", "iz_contact_percent",
-    "meatball_percent", "edge_percent",
-    "whiff_percent", "swing_percent", "f_strike_percent",
+    "k_percent",
+    "bb_percent",
+    "z_swing_percent",
+    "z_swing_miss_percent",
+    "oz_swing_percent",
+    "oz_swing_miss_percent",
+    "oz_contact_percent",
+    "iz_contact_percent",
+    "meatball_percent",
+    "edge_percent",
+    "whiff_percent",
+    "swing_percent",
+    "f_strike_percent",
     # Distribution
-    "groundballs_percent", "flyballs_percent",
-    "linedrives_percent", "popups_percent",
+    "groundballs_percent",
+    "flyballs_percent",
+    "linedrives_percent",
+    "popups_percent",
     # Arsenal
-    "velocity", "ff_avg_speed", "ff_avg_spin",
-    "ff_avg_break_x", "ff_avg_break_z",
-    "sl_avg_speed", "sl_avg_spin",
-    "ch_avg_speed", "ch_avg_spin",
-    "cu_avg_speed", "cu_avg_spin",
-    "release_extension", "arm_angle",
+    "velocity",
+    "ff_avg_speed",
+    "ff_avg_spin",
+    "ff_avg_break_x",
+    "ff_avg_break_z",
+    "sl_avg_speed",
+    "sl_avg_spin",
+    "ch_avg_speed",
+    "ch_avg_spin",
+    "cu_avg_speed",
+    "cu_avg_spin",
+    "release_extension",
+    "arm_angle",
 ]
 
 
@@ -130,7 +192,7 @@ RETRO_TO_TEAM_NAME: dict[str, str] = {
     "CHA": "White Sox",
     "CHN": "Cubs",
     "CIN": "Reds",
-    "CLE": "Guardians",   # processed data uses Guardians for all years
+    "CLE": "Guardians",  # processed data uses Guardians for all years
     "COL": "Rockies",
     "DET": "Tigers",
     "HOU": "Astros",
@@ -142,7 +204,7 @@ RETRO_TO_TEAM_NAME: dict[str, str] = {
     "NYA": "Yankees",
     "NYN": "Mets",
     "OAK": "Athletics",
-    "ATH": "Athletics",   # Sacramento Athletics (2025+)
+    "ATH": "Athletics",  # Sacramento Athletics (2025+)
     "PHI": "Phillies",
     "PIT": "Pirates",
     "SDN": "Padres",
@@ -193,13 +255,16 @@ def _build_player_team_map() -> pd.DataFrame:
 
     # Load chadwick register to map retro_id → mlbam_id
     from pybaseball import chadwick_register
+
     chad = chadwick_register()[["key_retro", "key_mlbam"]].dropna(subset=["key_retro", "key_mlbam"])
     chad["key_mlbam"] = chad["key_mlbam"].astype(int)
 
     merged = retro_players.merge(chad, left_on="retro_id", right_on="key_retro", how="inner")
-    result = merged[["key_mlbam", "season", "team"]].rename(
-        columns={"key_mlbam": "player_id", "season": "year"}
-    ).drop_duplicates()
+    result = (
+        merged[["key_mlbam", "season", "team"]]
+        .rename(columns={"key_mlbam": "player_id", "season": "year"})
+        .drop_duplicates()
+    )
 
     # Translate Retrosheet 3-letter codes → full team names used by build_model_features()
     result["team"] = result["team"].map(RETRO_TO_TEAM_NAME).fillna(result["team"])
@@ -266,6 +331,7 @@ def _load_game_data() -> pd.DataFrame:
       - targets: home_win, home_cover, went_over
     """
     from src.models.features import build_model_features
+
     return build_model_features(2020, 2025)
 
 
@@ -334,35 +400,36 @@ def build_enriched_features(
     # Join home batting
     if not bat_agg.empty:
         home_bat = bat_agg.rename(columns={"team": "hometeam"})
-        home_bat = home_bat.rename(columns={
-            c: f"home_{c}" for c in home_bat.columns if c.startswith("bat_")
-        })
+        home_bat = home_bat.rename(
+            columns={c: f"home_{c}" for c in home_bat.columns if c.startswith("bat_")}
+        )
         enriched = enriched.merge(home_bat, on=["season", "hometeam"], how="left")
 
         away_bat = bat_agg.rename(columns={"team": "visteam"})
-        away_bat = away_bat.rename(columns={
-            c: f"away_{c}" for c in away_bat.columns if c.startswith("bat_")
-        })
+        away_bat = away_bat.rename(
+            columns={c: f"away_{c}" for c in away_bat.columns if c.startswith("bat_")}
+        )
         enriched = enriched.merge(away_bat, on=["season", "visteam"], how="left")
 
     # Join home/away pitching
     if not pit_agg.empty:
         home_pit = pit_agg.rename(columns={"team": "hometeam"})
-        home_pit = home_pit.rename(columns={
-            c: f"home_{c}" for c in home_pit.columns if c.startswith("pit_")
-        })
+        home_pit = home_pit.rename(
+            columns={c: f"home_{c}" for c in home_pit.columns if c.startswith("pit_")}
+        )
         enriched = enriched.merge(home_pit, on=["season", "hometeam"], how="left")
 
         away_pit = pit_agg.rename(columns={"team": "visteam"})
-        away_pit = away_pit.rename(columns={
-            c: f"away_{c}" for c in away_pit.columns if c.startswith("pit_")
-        })
+        away_pit = away_pit.rename(
+            columns={c: f"away_{c}" for c in away_pit.columns if c.startswith("pit_")}
+        )
         enriched = enriched.merge(away_pit, on=["season", "visteam"], how="left")
 
     return enriched
 
 
 # ── Monte Carlo trial engine ─────────────────────────────────────────────
+
 
 def _run_single_trial(
     games: pd.DataFrame,
@@ -430,20 +497,25 @@ def _run_single_trial(
             X_tr, X_te = X[train_idx], X[test_idx]
             y_tr, y_te = y[train_idx], y[test_idx]
 
-            pipe = Pipeline([
-                ("scaler", StandardScaler()),
-                ("xgb", XGBClassifier(
-                    n_estimators=100,
-                    max_depth=4,
-                    learning_rate=0.1,
-                    subsample=0.8,
-                    colsample_bytree=0.8,
-                    use_label_encoder=False,
-                    eval_metric="logloss",
-                    verbosity=0,
-                    random_state=42,
-                )),
-            ])
+            pipe = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    (
+                        "xgb",
+                        XGBClassifier(
+                            n_estimators=100,
+                            max_depth=4,
+                            learning_rate=0.1,
+                            subsample=0.8,
+                            colsample_bytree=0.8,
+                            use_label_encoder=False,
+                            eval_metric="logloss",
+                            verbosity=0,
+                            random_state=42,
+                        ),
+                    ),
+                ]
+            )
             pipe.fit(X_tr, y_tr)
             proba = pipe.predict_proba(X_te)[:, 1]
 
@@ -484,11 +556,14 @@ def run_monte_carlo(
 
     # Baseline features from the existing Retrosheet pipeline
     from src.models.features import ALL_FEATURE_COLS
+
     baseline_features = [c for c in ALL_FEATURE_COLS if c in games.columns]
 
     logger.info(
         "Running %d Monte Carlo trials  (sample %d bat + %d pit cols each)...",
-        n_trials, n_bat, n_pit,
+        n_trials,
+        n_bat,
+        n_pit,
     )
 
     all_results = []
@@ -497,7 +572,13 @@ def run_monte_carlo(
             logger.info("  Trial %d / %d", i + 1, n_trials)
 
         result = _run_single_trial(
-            games, bat_df, pit_df, baseline_features, rng, n_bat, n_pit,
+            games,
+            bat_df,
+            pit_df,
+            baseline_features,
+            rng,
+            n_bat,
+            n_pit,
         )
         if result:
             all_results.append(result)
@@ -518,7 +599,9 @@ def run_monte_carlo(
 
     logger.info(
         "Top %d%% cutoff: mean_auc >= %.4f  (%d trials)",
-        int(top_pct), cutoff, len(top_trials),
+        int(top_pct),
+        cutoff,
+        len(top_trials),
     )
 
     # Count how often each feature appears in top trials
@@ -533,42 +616,62 @@ def run_monte_carlo(
     # Build ranked summary
     rows = []
     for col, count in bat_counter.most_common():
-        rows.append({
-            "feature": col,
-            "type": "batter",
-            "top_trial_appearances": count,
-            "appearance_rate": count / len(top_trials),
-        })
+        rows.append(
+            {
+                "feature": col,
+                "type": "batter",
+                "top_trial_appearances": count,
+                "appearance_rate": count / len(top_trials),
+            }
+        )
     for col, count in pit_counter.most_common():
-        rows.append({
-            "feature": col,
-            "type": "pitcher",
-            "top_trial_appearances": count,
-            "appearance_rate": count / len(top_trials),
-        })
+        rows.append(
+            {
+                "feature": col,
+                "type": "pitcher",
+                "top_trial_appearances": count,
+                "appearance_rate": count / len(top_trials),
+            }
+        )
 
-    ranking_df = pd.DataFrame(rows).sort_values(
-        "appearance_rate", ascending=False,
-    ).reset_index(drop=True)
+    ranking_df = (
+        pd.DataFrame(rows)
+        .sort_values(
+            "appearance_rate",
+            ascending=False,
+        )
+        .reset_index(drop=True)
+    )
 
     # ── Summary stats ────────────────────────────────────────────────────
     logger.info("\n=== MONTE CARLO FEATURE RANKING ===")
-    logger.info("Trials: %d  |  Valid: %d  |  Top %.0f%%: %d",
-                n_trials, len(results_df), top_pct, len(top_trials))
-    logger.info("Baseline AUC (no Savant):  moneyline=%.4f  spread=%.4f  totals=%.4f",
-                *_baseline_auc(games, baseline_features))
+    logger.info(
+        "Trials: %d  |  Valid: %d  |  Top %.0f%%: %d",
+        n_trials,
+        len(results_df),
+        top_pct,
+        len(top_trials),
+    )
+    logger.info(
+        "Baseline AUC (no Savant):  moneyline=%.4f  spread=%.4f  totals=%.4f",
+        *_baseline_auc(games, baseline_features),
+    )
     for target in TARGETS:
         col = f"{target}_auc"
         logger.info(
             "  %s — median: %.4f  top-10%%: %.4f",
-            target, results_df[col].median(), top_trials[col].median(),
+            target,
+            results_df[col].median(),
+            top_trials[col].median(),
         )
 
     logger.info("\nTop 20 features by appearance in top trials:")
     for _, r in ranking_df.head(20).iterrows():
         logger.info(
             "  %-30s  %s  rate=%.1f%%",
-            r["feature"], r["type"], r["appearance_rate"] * 100,
+            r["feature"],
+            r["type"],
+            r["appearance_rate"] * 100,
         )
 
     # Save results
@@ -587,7 +690,8 @@ def _baseline_auc(
 ) -> tuple[float, float, float]:
     """Quick baseline AUC with existing Retrosheet features only."""
     subset = games.dropna(
-        subset=baseline_features + list(TARGETS.values()), how="any",
+        subset=baseline_features + list(TARGETS.values()),
+        how="any",
     )
     X = subset[baseline_features].values
     tscv = TimeSeriesSplit(n_splits=3)
@@ -596,15 +700,25 @@ def _baseline_auc(
         y = subset[target_col].values
         fold_aucs = []
         for train_idx, test_idx in tscv.split(X):
-            pipe = Pipeline([
-                ("scaler", StandardScaler()),
-                ("xgb", XGBClassifier(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, colsample_bytree=0.8,
-                    use_label_encoder=False, eval_metric="logloss",
-                    verbosity=0, random_state=42,
-                )),
-            ])
+            pipe = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    (
+                        "xgb",
+                        XGBClassifier(
+                            n_estimators=100,
+                            max_depth=4,
+                            learning_rate=0.1,
+                            subsample=0.8,
+                            colsample_bytree=0.8,
+                            use_label_encoder=False,
+                            eval_metric="logloss",
+                            verbosity=0,
+                            random_state=42,
+                        ),
+                    ),
+                ]
+            )
             pipe.fit(X[train_idx], y[train_idx])
             proba = pipe.predict_proba(X[test_idx])[:, 1]
             if len(np.unique(y[test_idx])) > 1:
@@ -615,6 +729,7 @@ def _baseline_auc(
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

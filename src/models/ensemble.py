@@ -2,6 +2,7 @@
 
 Combines predictions from multiple models via weighted probability averaging.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -33,9 +34,7 @@ def ensemble_predictions(
         weights = [1.0 / len(model_predictions)] * len(model_predictions)
 
     if abs(sum(weights) - 1.0) > 1e-6:
-        raise ValueError(
-            f"Weights must sum to 1.0 — got {sum(weights):.6f}"
-        )
+        raise ValueError(f"Weights must sum to 1.0 — got {sum(weights):.6f}")
 
     if len(weights) != len(model_predictions):
         raise ValueError(
@@ -71,12 +70,12 @@ def confidence_label(score: float) -> str:
 
 
 def compute_confidence_score(
-    prob: "pd.Series | float",
-    edge: "pd.Series | float",
+    prob: pd.Series | float,
+    edge: pd.Series | float,
     edge_clip: float = 0.20,
     prob_weight: float = 0.4,
     edge_weight: float = 0.6,
-) -> "pd.Series | float":
+) -> pd.Series | float:
     """Combine model probability strength and betting edge into a 0–1 score.
 
     Higher confidence when:
@@ -94,7 +93,7 @@ def compute_confidence_score(
     Returns:
         Confidence score clipped to [0, 1].
     """
-    prob_strength = (prob - 0.5).__abs__() * 2        # 0 at 50 %, 1 at 0/100 %
+    prob_strength = (prob - 0.5).__abs__() * 2  # 0 at 50 %, 1 at 0/100 %
     edge_strength = (edge if hasattr(edge, "clip") else pd.Series([edge])).clip(
         0, edge_clip
     ) / edge_clip

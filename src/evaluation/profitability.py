@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .backtester import BacktestResult, BetResult
+from .backtester import BacktestResult
 
 
 def profitability_report(result: BacktestResult) -> pd.DataFrame:
@@ -21,25 +21,34 @@ def profitability_report(result: BacktestResult) -> pd.DataFrame:
     if not result.bets:
         return pd.DataFrame()
 
-    df = pd.DataFrame([{
-        "date": b.date,
-        "pick_type": b.pick_type,
-        "confidence": b.confidence,
-        "confidence_score": b.confidence_score,
-        "edge": b.edge,
-        "odds": b.american_odds,
-        "result": b.result,
-        "profit": b.profit_units,
-    } for b in result.bets])
+    df = pd.DataFrame(
+        [
+            {
+                "date": b.date,
+                "pick_type": b.pick_type,
+                "confidence": b.confidence,
+                "confidence_score": b.confidence_score,
+                "edge": b.edge,
+                "odds": b.american_odds,
+                "result": b.result,
+                "profit": b.profit_units,
+            }
+            for b in result.bets
+        ]
+    )
 
-    tiers = df.groupby("confidence").agg(
-        total_bets=("result", "count"),
-        wins=("result", lambda x: (x == "win").sum()),
-        losses=("result", lambda x: (x == "loss").sum()),
-        total_profit=("profit", "sum"),
-        avg_odds=("odds", "mean"),
-        avg_edge=("edge", "mean"),
-    ).reset_index()
+    tiers = (
+        df.groupby("confidence")
+        .agg(
+            total_bets=("result", "count"),
+            wins=("result", lambda x: (x == "win").sum()),
+            losses=("result", lambda x: (x == "loss").sum()),
+            total_profit=("profit", "sum"),
+            avg_odds=("odds", "mean"),
+            avg_edge=("edge", "mean"),
+        )
+        .reset_index()
+    )
 
     tiers["win_rate"] = tiers["wins"] / (tiers["wins"] + tiers["losses"])
     tiers["roi"] = tiers["total_profit"] / tiers["total_bets"]
@@ -85,20 +94,29 @@ def monthly_breakdown(result: BacktestResult) -> pd.DataFrame:
     if not result.bets:
         return pd.DataFrame()
 
-    df = pd.DataFrame([{
-        "date": b.date,
-        "profit": b.profit_units,
-        "result": b.result,
-    } for b in result.bets])
+    df = pd.DataFrame(
+        [
+            {
+                "date": b.date,
+                "profit": b.profit_units,
+                "result": b.result,
+            }
+            for b in result.bets
+        ]
+    )
 
     df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
 
-    monthly = df.groupby("month").agg(
-        bets=("result", "count"),
-        wins=("result", lambda x: (x == "win").sum()),
-        losses=("result", lambda x: (x == "loss").sum()),
-        profit=("profit", "sum"),
-    ).reset_index()
+    monthly = (
+        df.groupby("month")
+        .agg(
+            bets=("result", "count"),
+            wins=("result", lambda x: (x == "win").sum()),
+            losses=("result", lambda x: (x == "loss").sum()),
+            profit=("profit", "sum"),
+        )
+        .reset_index()
+    )
 
     monthly["win_rate"] = monthly["wins"] / (monthly["wins"] + monthly["losses"])
     monthly["roi"] = monthly["profit"] / monthly["bets"]
@@ -127,15 +145,17 @@ def edge_filter_analysis(result: BacktestResult) -> pd.DataFrame:
         profit = sum(b.profit_units for b in filtered)
         decided = wins + losses
 
-        rows.append({
-            "min_edge": threshold,
-            "total_bets": len(filtered),
-            "wins": wins,
-            "losses": losses,
-            "win_rate": round(wins / decided, 4) if decided > 0 else 0.0,
-            "total_profit": round(profit, 2),
-            "roi": round(profit / len(filtered), 4),
-        })
+        rows.append(
+            {
+                "min_edge": threshold,
+                "total_bets": len(filtered),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / decided, 4) if decided > 0 else 0.0,
+                "total_profit": round(profit, 2),
+                "roi": round(profit / len(filtered), 4),
+            }
+        )
 
     report = pd.DataFrame(rows)
     print("\n=== Edge Filter Analysis ===")

@@ -6,9 +6,8 @@ Entry point for the Betting Cleanup MLB dashboard.
   - st.navigation()       6-page sidebar navigation
 """
 
-import sys
 import datetime
-import math
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -19,19 +18,66 @@ sys.path.insert(0, str(ROOT))
 
 from page_utils import (
     ROOT,
-    MLB_BLUE,
-    MLB_RED,
-    _fetch_todays_schedule,
-    _fetch_team_standings,
-    _fetch_espn_odds,
-    _load_precomputed,
-    _load_model_results,
-    _estimate_win_prob,
     _american_to_implied_prob,
+    _fetch_espn_odds,
+    _fetch_team_standings,
+    _fetch_todays_schedule,
+    _load_model_results,
+    _load_precomputed,
     _prob_bar_html,
-    init_session_state,
     add_betting_oracle_footer,
+    init_session_state,
 )
+
+# v2 engine: one coherent score distribution per matchup, so moneyline,
+# run-line, and totals reconcile to the same joint distribution.
+from src.models.score_distribution import ScoreDistribution, independent_poisson_score_distribution
+
+_LEAGUE_RUNS_PER_GAME = 4.5
+
+
+def _team_run_rate(team_full: str, opponent_full: str, hist_stnd: pd.DataFrame) -> float:
+    """Expected runs for ``team_full`` against ``opponent_full``.
+
+    Real per-season team stats drive the estimate: the team's runs scored
+    (offense) blended with the opponent's runs allowed (defense) via a
+    geometric mean, regressed toward the league average so small samples do
+    not dominate.  Falls back to league average when data is missing.
+    """
+    try:
+        last = team_full.split()[-1]
+        team_row = hist_stnd[hist_stnd["team"].str.contains(last, case=False, na=False)]
+        opp_last = opponent_full.split()[-1]
+        opp_row = hist_stnd[hist_stnd["team"].str.contains(opp_last, case=False, na=False)]
+        if not team_row.empty and not opp_row.empty:
+            team_row = team_row.sort_values("season").iloc[-1]
+            opp_row = opp_row.sort_values("season").iloc[-1]
+            offense = float(team_row["RS_per_G"])
+            defense = float(opp_row["RA_per_G"])
+            # Geometric mean of own offense and opponent defense, regressed
+            # toward league average (shrinkage keeps extreme teams honest).
+            blended = (offense * defense) ** 0.5
+            return 0.7 * blended + 0.3 * _LEAGUE_RUNS_PER_GAME
+    except Exception:
+        pass
+    return _LEAGUE_RUNS_PER_GAME
+
+
+def _coherent_game_distribution(
+    home_full: str,
+    away_full: str,
+    hist_stnd: pd.DataFrame,
+) -> ScoreDistribution:
+    """Build a coherent score distribution from real per-game team context.
+
+    Run rates come from each team's actual runs-scored/allowed per game from
+    the precomputed standings, so the moneyline, run line, and totals all fall
+    out of the same joint distribution instead of a W% logistic anchor.
+    """
+    home_rate = _team_run_rate(home_full, away_full, hist_stnd)
+    away_rate = _team_run_rate(away_full, home_full, hist_stnd)
+    return independent_poisson_score_distribution(away_rate, home_rate)
+
 
 st.set_page_config(
     page_title="Betting Cleanup - MLB Predictions",
@@ -52,34 +98,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
     """
     Calculate the optimal height for a Streamlit dataframe based on number of rows.
-    
+
     Args:
         df (pd.DataFrame): The dataframe to display
         row_height (int): Height per row in pixels. Default: 35
         header_height (int): Height of header row in pixels. Default: 38
         padding (int): Extra padding in pixels. Default: 2
         max_height (int): Maximum height cap in pixels. Default: 600 (None for no limit)
-    
+
     Returns:
         int: Calculated height in pixels
-    
+
     Example:
         height = get_dataframe_height(my_df)
         st.dataframe(my_df, height=height)
     """
     num_rows = len(df)
     calculated_height = (num_rows * row_height) + header_height + padding
-    
+
     if max_height is not None:
         return min(calculated_height, max_height)
     return calculated_height
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _short(full_name: str) -> str:
     """Last word of a team name, e.g. 'New York Yankees' -> 'Yankees'."""
@@ -90,7 +139,7 @@ def _get_rs_g(team_full: str, hist_stnd: pd.DataFrame) -> float:
     """Team RS/G from most recent Retrosheet season. Defaults to 4.5."""
     try:
         last = team_full.split()[-1]
-        sub  = hist_stnd[hist_stnd["team"].str.contains(last, case=False, na=False)]
+        sub = hist_stnd[hist_stnd["team"].str.contains(last, case=False, na=False)]
         if not sub.empty:
             return float(sub.sort_values("season").iloc[-1]["RS_per_G"])
     except Exception:
@@ -110,8 +159,14 @@ def _build_game_recs(
     """
     home_full = g.get("home_name", "")
     away_full = g.get("away_name", "")
-    home_prob = _estimate_win_prob(home_full, away_full, standings)
-    away_prob = 1.0 - home_prob
+    # v2 engine: one coherent joint distribution drives moneyline, run line,
+    # and totals so the three markets reconcile by construction.  Run rates
+    # come from real per-team runs scored/allowed.
+    dist = _coherent_game_distribution(home_full, away_full, hist_stnd)
+    # The moneyline shown in the card comes from the coherent distribution
+    # (team stats), not the W% logistic.
+    home_prob = dist.home_moneyline()
+    away_prob = 1.0 - home_prob - dist.tie_probability()
     recs: dict = {}
 
     if not espn_game:
@@ -122,24 +177,24 @@ def _build_game_recs(
     ml_a_raw = espn_game.get("ml_away")
     if ml_h_raw and ml_a_raw:
         try:
-            ml_h   = int(ml_h_raw)
-            ml_a   = int(ml_a_raw)
+            ml_h = int(ml_h_raw)
+            ml_a = int(ml_a_raw)
             impl_h = _american_to_implied_prob(ml_h)
             impl_a = _american_to_implied_prob(ml_a)
             recs["ml"] = {
                 "home": {
-                    "team":     home_full,
+                    "team": home_full,
                     "odds_str": f"+{ml_h}" if ml_h >= 0 else str(ml_h),
-                    "impl":     impl_h,
+                    "impl": impl_h,
                     "est_prob": home_prob,
-                    "edge":     home_prob - impl_h,
+                    "edge": home_prob - impl_h,
                 },
                 "away": {
-                    "team":     away_full,
+                    "team": away_full,
                     "odds_str": f"+{ml_a}" if ml_a >= 0 else str(ml_a),
-                    "impl":     impl_a,
+                    "impl": impl_a,
                     "est_prob": away_prob,
-                    "edge":     away_prob - impl_a,
+                    "edge": away_prob - impl_a,
                 },
                 "best": "home" if (home_prob - impl_h) >= (away_prob - impl_a) else "away",
             }
@@ -152,7 +207,7 @@ def _build_game_recs(
 
     def _parse_american(raw) -> int | None:
         try:
-            return int(str(raw).replace("+", ""))
+            return int(float(str(raw).replace("+", "")))
         except (ValueError, TypeError):
             return None
 
@@ -175,19 +230,17 @@ def _build_game_recs(
         home_favorite = False
 
     if home_favorite:
-        home_rl = home_prob ** 1.4
-        away_rl = 1.0 - home_rl
+        home_rl, away_rl, _push_rl = dist.run_line_probabilities(-1.5)
         home_pick = f"{_short(home_full)} −1.5"
         away_pick = f"{_short(away_full)} +1.5"
     else:
-        away_rl = away_prob ** 1.4
-        home_rl = 1.0 - away_rl
+        away_rl, home_rl, _push_rl = dist.run_line_probabilities(-1.5)
         home_pick = f"{_short(home_full)} +1.5"
         away_pick = f"{_short(away_full)} −1.5"
 
     if spread_h_raw and str(spread_h_raw) not in ("—", "", "None"):
         try:
-            sho    = _parse_american(spread_h_raw)
+            sho = _parse_american(spread_h_raw)
             if sho is None:
                 raise ValueError
             impl_h = _american_to_implied_prob(sho)
@@ -203,18 +256,18 @@ def _build_game_recs(
 
             recs["rl"] = {
                 "home": {
-                    "pick":     home_pick,
+                    "pick": home_pick,
                     "odds_str": f"+{sho}" if sho >= 0 else str(sho),
-                    "impl":     impl_h,
+                    "impl": impl_h,
                     "est_prob": home_rl,
-                    "edge":     home_rl - impl_h,
+                    "edge": home_rl - impl_h,
                 },
                 "away": {
-                    "pick":     away_pick,
+                    "pick": away_pick,
                     "odds_str": away_odds_str,
-                    "impl":     impl_a,
+                    "impl": impl_a,
                     "est_prob": away_rl,
-                    "edge":     away_rl - impl_a,
+                    "edge": away_rl - impl_a,
                 },
                 "best": "home" if (home_rl - impl_h) >= (away_rl - impl_a) else "away",
             }
@@ -222,20 +275,25 @@ def _build_game_recs(
             pass
 
     # -- Over / Under --
-    ou_raw   = espn_game.get("over_under")
-    ov_raw   = espn_game.get("over_odds")
-    un_raw   = espn_game.get("under_odds")
+    ou_raw = espn_game.get("over_under")
+    ov_raw = espn_game.get("over_odds")
+    un_raw = espn_game.get("under_odds")
+    # v2 fail-closed: an edge requires both prices; missing odds means no O/U
+    # recommendation, not a fabricated 50/50 edge.
     if ou_raw and ov_raw and un_raw:
         try:
-            posted    = float(ou_raw)
+            posted = float(ou_raw)
             exp_total = _get_rs_g(home_full, hist_stnd) + _get_rs_g(away_full, hist_stnd)
-            diff      = exp_total - posted
-            over_prob = max(0.20, min(0.80, 0.50 + diff * 0.06))
-            under_prob = 1.0 - over_prob
+            # v2 engine: over/under/push from the same joint distribution,
+            # clamped to the same 0.20-0.80 band the legacy heuristic used so
+            # missing odds cannot produce absurd edges.
+            raw_over, raw_under, push_prob = dist.total_probabilities(posted)
+            over_prob = max(0.20, min(0.80, raw_over))
+            under_prob = max(0.20, min(0.80, raw_under))
 
             def _parse(raw) -> int | None:
                 try:
-                    return int(str(raw).replace("+", ""))
+                    return int(float(str(raw).replace("+", "")))
                 except (ValueError, TypeError):
                     return None
 
@@ -244,27 +302,29 @@ def _build_game_recs(
                     return "—"
                 return f"+{i}" if i >= 0 else str(i)
 
-            ov_int  = _parse(ov_raw)
-            un_int  = _parse(un_raw)
-            impl_ov = _american_to_implied_prob(ov_int)  if ov_int  else 0.5
-            impl_un = _american_to_implied_prob(un_int) if un_int else 0.5
+            ov_int = _parse(ov_raw)
+            un_int = _parse(un_raw)
+            if ov_int is None or un_int is None:
+                raise ValueError("missing over/under price")
+            impl_ov = _american_to_implied_prob(ov_int)
+            impl_un = _american_to_implied_prob(un_int)
 
             recs["ou"] = {
-                "posted":    posted,
+                "posted": posted,
                 "exp_total": exp_total,
                 "over": {
-                    "pick":     f"Over  {posted}",
+                    "pick": f"Over  {posted}",
                     "odds_str": _fmt(ov_raw, ov_int),
-                    "impl":     impl_ov,
+                    "impl": impl_ov,
                     "est_prob": over_prob,
-                    "edge":     over_prob - impl_ov,
+                    "edge": over_prob - impl_ov,
                 },
                 "under": {
-                    "pick":     f"Under {posted}",
+                    "pick": f"Under {posted}",
                     "odds_str": _fmt(un_raw, un_int),
-                    "impl":     impl_un,
+                    "impl": impl_un,
                     "est_prob": under_prob,
-                    "edge":     under_prob - impl_un,
+                    "edge": under_prob - impl_un,
                 },
                 "best": "over" if (over_prob - impl_ov) >= (under_prob - impl_un) else "under",
             }
@@ -285,7 +345,7 @@ def _rec_card_html(label: str, side: dict, exp_info: str) -> str:
         color, badge = "#dc2626", "⛔ PASS"
 
     if side.get("team"):
-        pick_text = _short(side["team"])   # e.g. "New York Yankees" → "Yankees"
+        pick_text = _short(side["team"])  # e.g. "New York Yankees" → "Yankees"
     else:
         pick_text = side.get("pick", "—")  # e.g. "Nationals +1.5" or "Over 8.5" — keep as-is
     return (
@@ -296,16 +356,17 @@ def _rec_card_html(label: str, side: dict, exp_info: str) -> str:
         f'<span style="background:{color};color:white;border-radius:6px;padding:1px 8px;'
         f'font-size:0.7rem;font-weight:700">{badge}</span></div>'
         f'<div style="font-size:0.78rem;color:#555;margin-top:2px">'
-        f'Odds: <b>{side["odds_str"]}</b>'
+        f"Odds: <b>{side['odds_str']}</b>"
         f' &nbsp;|&nbsp; Edge: <b style="color:{color}">{edge_pct:+.1f}%</b></div>'
         f'<div style="font-size:0.73rem;color:#888">{exp_info}</div>'
-        f'</div>'
+        f"</div>"
     )
 
 
 # ---------------------------------------------------------------------------
 # Home page
 # ---------------------------------------------------------------------------
+
 
 def home_page() -> None:
     """Landing page: hero metrics + per-game ML/Spread/O-U recommendations."""
@@ -327,63 +388,73 @@ def home_page() -> None:
     st.markdown("---")
 
     # Cached data
-    games_today   = _fetch_todays_schedule()
-    standings     = _fetch_team_standings()
-    espn_odds     = _fetch_espn_odds()
+    games_today = _fetch_todays_schedule()
+    standings = _fetch_team_standings()
+    espn_odds = _fetch_espn_odds()
     model_results = _load_model_results()
-    _pre          = _load_precomputed()
-    hist_stnd     = _pre["standings"]
+    _pre = _load_precomputed()
+    hist_stnd = _pre["standings"]
     init_session_state()
 
     # Hero metrics
     m1, m2, m3, m4, m5 = st.columns(5)
-    total_games  = len(games_today)
+    total_games = len(games_today)
     games_w_odds = sum(
-        1 for g in games_today
-        if any(g.get("home_name", "").split()[-1].lower() in eo.get("home_team", "").lower()
-               for eo in espn_odds)
+        1
+        for g in games_today
+        if any(
+            g.get("home_name", "").split()[-1].lower() in eo.get("home_team", "").lower()
+            for eo in espn_odds
+        )
     )
     accuracy = model_results["moneyline"]["metrics"].get("accuracy") if model_results else None
-    roc_auc  = model_results["moneyline"]["metrics"].get("roc_auc")  if model_results else None
-    m1.metric("Today's Games",   total_games)
+    roc_auc = model_results["moneyline"]["metrics"].get("roc_auc") if model_results else None
+    m1.metric("Today's Games", total_games)
     m2.metric("Games with Odds", games_w_odds)
-    m3.metric("ML Model AUC",    f"{roc_auc:.4f}" if roc_auc  else "—",
-              help="Moneyline XGBoost ROC-AUC on held-out test set.")
-    m4.metric("Model Accuracy",  f"{accuracy:.1%}" if accuracy else "—")
-    m5.metric("Odds Source",     "ESPN" if espn_odds else "Unavailable")
+    m3.metric(
+        "ML Model AUC",
+        f"{roc_auc:.4f}" if roc_auc else "—",
+        help="Moneyline XGBoost ROC-AUC on held-out test set.",
+    )
+    m4.metric("Model Accuracy", f"{accuracy:.1%}" if accuracy else "—")
+    m5.metric("Odds Source", "ESPN" if espn_odds else "Unavailable")
 
     st.markdown("---")
 
     if not games_today:
         st.info("No MLB games scheduled today, or the MLB Stats API is unreachable.")
     else:
-        st.markdown(f"### 🎯 Today's Games & Betting Recommendations")
+        st.markdown("### 🎯 Today's Games & Betting Recommendations")
         st.caption(
-            "Win probability: current-season W% logistic model (+4% HFA). "
-            "Run line: empirical cover-rate model. "
-            "O/U: historical RS/G vs posted total. "
+            "Win probability, run line, and O/U: one coherent score distribution "
+            "from each team's real runs-scored/allowed per game, so all three "
+            "markets reconcile. "
             "✅ BET = edge > 3% &nbsp;·&nbsp; ➡ LEAN = 0–3% &nbsp;·&nbsp; ⛔ PASS = negative edge."
         )
 
         _status_labels = {
-            "Final": "🏁 Final", "Game Over": "🏁 Final",
-            "In Progress": "🔴 LIVE", "Scheduled": "🕐 Scheduled",
-            "Pre-Game": "⏳ Pre-Game", "Warmup": "⏳ Warmup",
-            "Delayed": "⚠️ Delayed", "Postponed": "🚫 Postponed",
+            "Final": "🏁 Final",
+            "Game Over": "🏁 Final",
+            "In Progress": "🔴 LIVE",
+            "Scheduled": "🕐 Scheduled",
+            "Pre-Game": "⏳ Pre-Game",
+            "Warmup": "⏳ Warmup",
+            "Delayed": "⚠️ Delayed",
+            "Postponed": "🚫 Postponed",
         }
 
         for idx, g in enumerate(games_today):
             away_full = g.get("away_name", "Away")
             home_full = g.get("home_name", "Home")
-            away_sp   = g.get("away_probable_pitcher", "TBD") or "TBD"
-            home_sp   = g.get("home_probable_pitcher", "TBD") or "TBD"
-            status    = g.get("status", "Scheduled")
-            venue     = g.get("venue_name", "—")
+            away_sp = g.get("away_probable_pitcher", "TBD") or "TBD"
+            home_sp = g.get("home_probable_pitcher", "TBD") or "TBD"
+            status = g.get("status", "Scheduled")
+            venue = g.get("venue_name", "—")
 
             gtime_raw = g.get("game_datetime", "")
             if gtime_raw:
                 try:
-                    dt_utc    = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
+                    dt_utc = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
                     gtime_str = (dt_utc - datetime.timedelta(hours=4)).strftime("%I:%M %p ET")
                 except Exception:
                     gtime_str = "TBD"
@@ -396,17 +467,22 @@ def home_page() -> None:
                     score_str = f" &nbsp;·&nbsp; **{g['away_score']}–{g['home_score']}**"
 
             hk = home_full.split()[-1].lower()
-            espn_game = next((eo for eo in espn_odds if hk in eo.get("home_team", "").lower()), None)
-            recs      = _build_game_recs(g, espn_game, standings, hist_stnd)
-            home_prob = _estimate_win_prob(home_full, away_full, standings)
+            espn_game = next(
+                (eo for eo in espn_odds if hk in eo.get("home_team", "").lower()), None
+            )
+            recs = _build_game_recs(g, espn_game, standings, hist_stnd)
+            # v2 engine: win-prob bar uses the same coherent distribution as
+            # the moneyline/run-line/totals cards.
+            home_prob = _coherent_game_distribution(
+                home_full, away_full, hist_stnd
+            ).home_moneyline()
 
             with st.container(border=True):
                 # ── Game header ──
                 hdr_c1, hdr_c2 = st.columns([3, 2])
                 with hdr_c1:
                     st.markdown(
-                        f"#### {away_full} @ {home_full}"
-                        + (score_str if score_str else ""),
+                        f"#### {away_full} @ {home_full}" + (score_str if score_str else ""),
                         unsafe_allow_html=True,
                     )
                     st.markdown(
@@ -417,7 +493,9 @@ def home_page() -> None:
                         unsafe_allow_html=True,
                     )
                 with hdr_c2:
-                    st.markdown(_prob_bar_html(home_prob, home_full, away_full), unsafe_allow_html=True)
+                    st.markdown(
+                        _prob_bar_html(home_prob, home_full, away_full), unsafe_allow_html=True
+                    )
 
                 if not recs:
                     st.caption("⏳ Odds not yet available for this game.")
@@ -431,15 +509,15 @@ def home_page() -> None:
                 with col_ml:
                     st.markdown("##### 💵 Moneyline")
                     if "ml" in recs:
-                        ml   = recs["ml"]
+                        ml = recs["ml"]
                         best = ml["best"]
                         side = ml[best]
                         other = ml["away" if best == "home" else "home"]
-                        exp   = f"Est: {side['est_prob']:.0%} · Impl: {side['impl']:.0%}"
+                        exp = f"Est: {side['est_prob']:.0%} · Impl: {side['impl']:.0%}"
                         st.markdown(_rec_card_html("ML", side, exp), unsafe_allow_html=True)
                         st.caption(
                             f"Other side: {_short(other['team'])} {other['odds_str']} "
-                            f"(edge {other['edge']*100:+.1f}%)"
+                            f"(edge {other['edge'] * 100:+.1f}%)"
                         )
                     else:
                         st.caption("— odds unavailable —")
@@ -447,15 +525,14 @@ def home_page() -> None:
                 with col_rl:
                     st.markdown("##### 📏 Run Line (±1.5)")
                     if "rl" in recs:
-                        rl   = recs["rl"]
+                        rl = recs["rl"]
                         best = rl["best"]
                         side = rl[best]
                         other = rl["away" if best == "home" else "home"]
-                        exp   = f"Est cover: {side['est_prob']:.0%} · Impl: {side['impl']:.0%}"
+                        exp = f"Est cover: {side['est_prob']:.0%} · Impl: {side['impl']:.0%}"
                         st.markdown(_rec_card_html("RL", side, exp), unsafe_allow_html=True)
                         st.caption(
-                            f"Other side: {other['pick']} "
-                            f"(edge {other['edge']*100:+.1f}%)"
+                            f"Other side: {other['pick']} (edge {other['edge'] * 100:+.1f}%)"
                         )
                     else:
                         st.caption("— odds unavailable —")
@@ -463,11 +540,11 @@ def home_page() -> None:
                 with col_ou:
                     st.markdown("##### 📊 Over/Under")
                     if "ou" in recs:
-                        ou   = recs["ou"]
+                        ou = recs["ou"]
                         best = ou["best"]
                         side = ou[best]
                         other = ou["under" if best == "over" else "over"]
-                        exp   = (
+                        exp = (
                             f"Exp total: {ou['exp_total']:.1f} · "
                             f"Posted: {ou['posted']} · "
                             f"Impl: {side['impl']:.0%}"
@@ -475,7 +552,7 @@ def home_page() -> None:
                         st.markdown(_rec_card_html("OU", side, exp), unsafe_allow_html=True)
                         st.caption(
                             f"Other side: {other['pick'].strip()} {other['odds_str']} "
-                            f"(edge {other['edge']*100:+.1f}%)"
+                            f"(edge {other['edge'] * 100:+.1f}%)"
                         )
                     else:
                         st.caption("— odds unavailable —")
@@ -485,7 +562,7 @@ def home_page() -> None:
                 if st.button(
                     "🔍 View Full Game Details →",
                     key=f"home_detail_{idx}",
-                    width='stretch',
+                    width="stretch",
                 ):
                     st.session_state["schedule_selected_game"] = g
                     st.switch_page("pages/1_Today.py")
@@ -496,29 +573,43 @@ def home_page() -> None:
     st.markdown("### Explore")
     tc = st.columns(3)
     tiles = [
-        ("📅", "Today",            "Full schedule with detailed game drill-down", "pages/1_Today.py"),
-        ("📊", "Stats",            "Standings · Batting · Pitching · Leaders",   "pages/2_Stats.py"),
-        ("🆚", "Matchup Analysis", "H2H history · Rolling win-rate charts",       "pages/3_Matchup_Analysis.py"),
+        ("📅", "Today", "Full schedule with detailed game drill-down", "pages/1_Today.py"),
+        ("📊", "Stats", "Standings · Batting · Pitching · Leaders", "pages/2_Stats.py"),
+        (
+            "🆚",
+            "Matchup Analysis",
+            "H2H history · Rolling win-rate charts",
+            "pages/3_Matchup_Analysis.py",
+        ),
     ]
     for col, (icon, title, desc, path) in zip(tc, tiles):
         with col:
             with st.container(border=True):
-                st.markdown(f'<div style="text-align:center;font-size:1.8rem;padding-top:4px">{icon}</div>',
-                            unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="text-align:center;font-size:1.8rem;padding-top:4px">{icon}</div>',
+                    unsafe_allow_html=True,
+                )
                 st.page_link(path, label=f"**{title}**")
                 st.caption(desc)
 
     tc2 = st.columns(3)
     tiles2 = [
-        ("🤖", "Models",      "XGBoost features · Evaluation · Savant research",  "pages/4_Models.py"),
-        ("📈", "Performance", "Pick history · Model P&L · Kelly bankroll",         "pages/5_Performance.py"),
-        ("ℹ️", "About",       "Methodology, data sources & tech stack",            "pages/7_Info.py"),
+        ("🤖", "Models", "XGBoost features · Evaluation · Savant research", "pages/4_Models.py"),
+        (
+            "📈",
+            "Performance",
+            "Pick history · Model P&L · Kelly bankroll",
+            "pages/5_Performance.py",
+        ),
+        ("ℹ️", "About", "Methodology, data sources & tech stack", "pages/7_Info.py"),
     ]
     for col, (icon, title, desc, path) in zip(tc2, tiles2):
         with col:
             with st.container(border=True):
-                st.markdown(f'<div style="text-align:center;font-size:1.8rem;padding-top:4px">{icon}</div>',
-                            unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="text-align:center;font-size:1.8rem;padding-top:4px">{icon}</div>',
+                    unsafe_allow_html=True,
+                )
                 st.page_link(path, label=f"**{title}**")
                 st.caption(desc)
 
@@ -532,13 +623,13 @@ pg = st.navigation(
     {
         "": [
             st.Page(home_page, title="Home", icon="🏠", default=True),
-            st.Page("pages/1_Today.py",            title="Today",            icon="📅"),
-            st.Page("pages/2_Stats.py",            title="Stats",            icon="📊"),
+            st.Page("pages/1_Today.py", title="Today", icon="📅"),
+            st.Page("pages/2_Stats.py", title="Stats", icon="📊"),
             st.Page("pages/3_Matchup_Analysis.py", title="Matchup Analysis", icon="🆚"),
-            st.Page("pages/4_Models.py",           title="Models",           icon="🤖"),
-            st.Page("pages/5_Performance.py",      title="Performance",      icon="📈"),
-            st.Page("pages/6_Pick_6.py",           title="Pick 6",           icon="🎯"),
-            st.Page("pages/7_Info.py",             title="About",            icon="ℹ️"),
+            st.Page("pages/4_Models.py", title="Models", icon="🤖"),
+            st.Page("pages/5_Performance.py", title="Performance", icon="📈"),
+            st.Page("pages/6_Pick_6.py", title="Pick 6", icon="🎯"),
+            st.Page("pages/7_Info.py", title="About", icon="ℹ️"),
         ],
     }
 )

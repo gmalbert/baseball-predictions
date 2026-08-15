@@ -1,0 +1,10 @@
+schema_version: 1
+policy: fail_closed
+reason: >-
+  Legacy joblib artifacts lack feature, dependency, calibration, and checksum manifests and
+  were trained from a same-season aggregate matrix. They are retained only for audit.
+quarantined_patterns:
+  - models/*.pkl
+  - models/*.joblib
+required_sidecar: .manifest.json
+replacement_trainer: scripts/train_v2_models.py

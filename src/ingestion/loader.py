@@ -31,10 +31,7 @@ def csv_to_parquet(csv_path: Path, parquet_path: Path, **kwargs) -> pd.DataFrame
     df.to_parquet(parquet_path, index=False, engine="pyarrow")
     csv_size = csv_path.stat().st_size / 1024
     pq_size = parquet_path.stat().st_size / 1024
-    print(
-        f"  {csv_path.name} ({csv_size:.0f} KB) "
-        f"→ {parquet_path.name} ({pq_size:.0f} KB)"
-    )
+    print(f"  {csv_path.name} ({csv_size:.0f} KB) → {parquet_path.name} ({pq_size:.0f} KB)")
     return df
 
 

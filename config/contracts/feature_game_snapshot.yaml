@@ -1,0 +1,15 @@
+dataset: feature_game_snapshot
+version: 2.0.0
+primary_key: [snapshot_id]
+partition_by: [target_date, snapshot_type]
+required:
+  snapshot_id: string
+  game_id: string
+  as_of_time: timestamp[us, tz=UTC]
+  snapshot_type: string
+  feature_set_version: string
+  source_watermarks: json
+  row_hash: string
+checks:
+  - expression: source_max_observed_at <= as_of_time
+

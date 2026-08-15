@@ -12,8 +12,7 @@ Reference data (/affiliates, /markets) is free and doesn't count against quota.
 Data-point cost per fetch: ~15 games × 3 markets × 3 books = ~135 points.
 """
 
-from datetime import datetime, date
-from typing import Optional
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import requests
@@ -32,9 +31,9 @@ AFFILIATE_IDS = {
 
 # Market ID → our canonical market name
 MARKET_MAP = {
-    1: "h2h",       # moneyline
-    2: "spreads",   # run line
-    3: "totals",    # over/under
+    1: "h2h",  # moneyline
+    2: "spreads",  # run line
+    3: "totals",  # over/under
 }
 
 # Sentinel value meaning "off the board"
@@ -46,9 +45,9 @@ def _headers() -> dict:
 
 
 def fetch_events_for_date(
-    target_date: Optional[date] = None,
-    affiliate_ids: Optional[list[int]] = None,
-    market_ids: Optional[list[int]] = None,
+    target_date: date | None = None,
+    affiliate_ids: list[int] | None = None,
+    market_ids: list[int] | None = None,
 ) -> list[dict]:
     """Fetch raw event data from TheRundown for a given date.
 
@@ -101,9 +100,9 @@ def fetch_events_for_date(
 
 
 def fetch_current_odds(
-    target_date: Optional[date] = None,
-    affiliate_ids: Optional[list[int]] = None,
-    market_ids: Optional[list[int]] = None,
+    target_date: date | None = None,
+    affiliate_ids: list[int] | None = None,
+    market_ids: list[int] | None = None,
 ) -> pd.DataFrame:
     """Fetch today's MLB odds and return a DataFrame matching odds.py format.
 
@@ -120,7 +119,7 @@ def fetch_current_odds(
         requests.HTTPError: If the API request fails.
     """
     events = fetch_events_for_date(target_date, affiliate_ids, market_ids)
-    fetched_at = datetime.utcnow().isoformat()
+    fetched_at = datetime.now(UTC).isoformat()
     rows = []
 
     for event in events:
@@ -144,9 +143,7 @@ def fetch_current_odds(
                     prices = line.get("prices", {})
 
                     # Track whether any book marks this as the main line
-                    is_main = any(
-                        p.get("is_main_line") for p in prices.values()
-                    )
+                    is_main = any(p.get("is_main_line") for p in prices.values())
 
                     for aff_id_str, price_obj in prices.items():
                         aff_id = int(aff_id_str)
@@ -165,20 +162,22 @@ def fetch_current_odds(
                             except (ValueError, TypeError):
                                 pass
 
-                        rows.append({
-                            "game_id": event_id,
-                            "commence_time": event_date,
-                            "away_team": away_team,
-                            "home_team": home_team,
-                            "bookmaker": bookmaker,
-                            "market": market_name,
-                            "outcome_name": outcome_name,
-                            "outcome_price": price,
-                            "outcome_point": outcome_point,
-                            "is_main_line": is_main,
-                            "line_value": line_value,
-                            "fetched_at": fetched_at,
-                        })
+                        rows.append(
+                            {
+                                "game_id": event_id,
+                                "commence_time": event_date,
+                                "away_team": away_team,
+                                "home_team": home_team,
+                                "bookmaker": bookmaker,
+                                "market": market_name,
+                                "outcome_name": outcome_name,
+                                "outcome_price": price,
+                                "outcome_point": outcome_point,
+                                "is_main_line": is_main,
+                                "line_value": line_value,
+                                "fetched_at": fetched_at,
+                            }
+                        )
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -200,14 +199,14 @@ def fetch_current_odds(
         alts["_book_count"] = alts["_line_group"].map(book_counts)
         alts["_rank"] = (~alts["is_main_line"]).astype(int) * 1000 - alts["_book_count"]
 
-        best_groups = (
-            alts.groupby(["game_id", "outcome_name"])["_rank"]
-            .idxmin()
-        )
+        best_groups = alts.groupby(["game_id", "outcome_name"])["_rank"].idxmin()
         best_line_groups = alts.loc[best_groups, "_line_group"].unique()
         alts_filtered = alts[alts["_line_group"].isin(best_line_groups)]
 
-        df = pd.concat([mains, alts_filtered.drop(columns=["_line_group", "_book_count", "_rank"])], ignore_index=True)
+        df = pd.concat(
+            [mains, alts_filtered.drop(columns=["_line_group", "_book_count", "_rank"])],
+            ignore_index=True,
+        )
 
     # Drop helper columns
     df = df.drop(columns=["is_main_line", "line_value"], errors="ignore")
@@ -227,16 +226,33 @@ def get_consensus_line(df: pd.DataFrame) -> pd.DataFrame:
     Same logic as odds.get_consensus_line — produces the same output schema
     so downstream code works unchanged.
     """
+    from src.markets.pricing import american_to_decimal, decimal_to_american
+
+    if df.empty:
+        return df.copy()
+    work = df.copy()
+    work["decimal_price"] = work["outcome_price"].map(lambda value: american_to_decimal(int(value)))
+    work["implied_probability"] = 1.0 / work["decimal_price"]
+    work["outcome_point"] = pd.to_numeric(work["outcome_point"], errors="coerce")
+    # Groupby median on an all-null point column emits a NumPy warning; use a
+    # sentinel solely during aggregation and restore null afterwards.
+    point_sentinel = -9_999_999.0
+    work["_point_for_aggregate"] = work["outcome_point"].fillna(point_sentinel)
     consensus = (
-        df.groupby(["game_id", "away_team", "home_team", "market", "outcome_name"])
+        work.groupby(["game_id", "away_team", "home_team", "market", "outcome_name"])
         .agg(
-            median_price=("outcome_price", "median"),
-            mean_price=("outcome_price", "mean"),
-            median_point=("outcome_point", "median"),
+            median_decimal_price=("decimal_price", "median"),
+            mean_decimal_price=("decimal_price", "mean"),
+            median_implied_probability=("implied_probability", "median"),
+            implied_probability_dispersion=("implied_probability", "std"),
+            median_point=("_point_for_aggregate", "median"),
             num_books=("bookmaker", "nunique"),
         )
         .reset_index()
     )
+    consensus["median_price"] = consensus["median_decimal_price"].map(decimal_to_american)
+    consensus["mean_price"] = consensus["mean_decimal_price"].map(decimal_to_american)
+    consensus.loc[consensus["median_point"] == point_sentinel, "median_point"] = float("nan")
     return consensus
 
 

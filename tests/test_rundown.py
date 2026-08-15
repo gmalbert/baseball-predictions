@@ -1,17 +1,17 @@
 """Tests for src/ingestion/therundown.py."""
 
+from datetime import date
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
 import pytest
-from unittest.mock import patch, MagicMock
-from datetime import date
 
 from src.ingestion.therundown import (
-    fetch_events_for_date,
-    fetch_current_odds,
-    get_consensus_line,
     SENTINEL_OFF_BOARD,
+    fetch_current_odds,
+    fetch_events_for_date,
+    get_consensus_line,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -137,6 +137,7 @@ def _mock_response(events, headers=None):
 
 # ── Tests: fetch_events_for_date ─────────────────────────────────────────
 
+
 @patch("src.ingestion.therundown.requests.get")
 @patch("src.ingestion.therundown.config")
 def test_fetch_events_for_date_returns_events(mock_config, mock_get):
@@ -172,6 +173,7 @@ def test_fetch_events_for_date_retries_without_main_line(mock_config, mock_get):
 
 # ── Tests: fetch_current_odds ────────────────────────────────────────────
 
+
 @patch("src.ingestion.therundown.fetch_events_for_date")
 @patch("src.ingestion.therundown.config")
 def test_fetch_current_odds_schema(mock_config, mock_fetch):
@@ -181,9 +183,16 @@ def test_fetch_current_odds_schema(mock_config, mock_fetch):
     df = fetch_current_odds(date(2026, 7, 10))
 
     expected_cols = {
-        "game_id", "commence_time", "away_team", "home_team",
-        "bookmaker", "market", "outcome_name", "outcome_price",
-        "outcome_point", "fetched_at",
+        "game_id",
+        "commence_time",
+        "away_team",
+        "home_team",
+        "bookmaker",
+        "market",
+        "outcome_name",
+        "outcome_price",
+        "outcome_point",
+        "fetched_at",
     }
     assert expected_cols.issubset(set(df.columns))
     assert len(df) > 0
@@ -271,15 +280,42 @@ def test_fetch_current_odds_empty_events(mock_config, mock_fetch):
 
 # ── Tests: get_consensus_line ────────────────────────────────────────────
 
+
 def test_get_consensus_line_medians():
-    df = pd.DataFrame([
-        {"game_id": "g1", "away_team": "A", "home_team": "B", "market": "h2h",
-         "outcome_name": "A", "outcome_price": -150, "outcome_point": None, "bookmaker": "dk"},
-        {"game_id": "g1", "away_team": "A", "home_team": "B", "market": "h2h",
-         "outcome_name": "A", "outcome_price": -140, "outcome_point": None, "bookmaker": "fd"},
-        {"game_id": "g1", "away_team": "A", "home_team": "B", "market": "h2h",
-         "outcome_name": "A", "outcome_price": -160, "outcome_point": None, "bookmaker": "mgm"},
-    ])
+    df = pd.DataFrame(
+        [
+            {
+                "game_id": "g1",
+                "away_team": "A",
+                "home_team": "B",
+                "market": "h2h",
+                "outcome_name": "A",
+                "outcome_price": -150,
+                "outcome_point": None,
+                "bookmaker": "dk",
+            },
+            {
+                "game_id": "g1",
+                "away_team": "A",
+                "home_team": "B",
+                "market": "h2h",
+                "outcome_name": "A",
+                "outcome_price": -140,
+                "outcome_point": None,
+                "bookmaker": "fd",
+            },
+            {
+                "game_id": "g1",
+                "away_team": "A",
+                "home_team": "B",
+                "market": "h2h",
+                "outcome_name": "A",
+                "outcome_price": -160,
+                "outcome_point": None,
+                "bookmaker": "mgm",
+            },
+        ]
+    )
 
     consensus = get_consensus_line(df)
     row = consensus.iloc[0]
@@ -289,12 +325,30 @@ def test_get_consensus_line_medians():
 
 
 def test_get_consensus_line_with_points():
-    df = pd.DataFrame([
-        {"game_id": "g1", "away_team": "A", "home_team": "B", "market": "spreads",
-         "outcome_name": "A", "outcome_price": -110, "outcome_point": -1.5, "bookmaker": "dk"},
-        {"game_id": "g1", "away_team": "A", "home_team": "B", "market": "spreads",
-         "outcome_name": "A", "outcome_price": -115, "outcome_point": -1.5, "bookmaker": "fd"},
-    ])
+    df = pd.DataFrame(
+        [
+            {
+                "game_id": "g1",
+                "away_team": "A",
+                "home_team": "B",
+                "market": "spreads",
+                "outcome_name": "A",
+                "outcome_price": -110,
+                "outcome_point": -1.5,
+                "bookmaker": "dk",
+            },
+            {
+                "game_id": "g1",
+                "away_team": "A",
+                "home_team": "B",
+                "market": "spreads",
+                "outcome_name": "A",
+                "outcome_price": -115,
+                "outcome_point": -1.5,
+                "bookmaker": "fd",
+            },
+        ]
+    )
 
     consensus = get_consensus_line(df)
     assert consensus.iloc[0]["median_point"] == -1.5
@@ -302,10 +356,10 @@ def test_get_consensus_line_with_points():
 
 # ── Tests: fallback behavior ─────────────────────────────────────────────
 
+
 @patch("src.ingestion.therundown.fetch_current_odds")
 def test_fallback_on_rundown_failure(mock_rundown):
     """Simulate the fallback pattern used in scheduler/pipeline."""
-    from src.ingestion.odds import fetch_current_odds as fallback_fetch
 
     mock_rundown.side_effect = Exception("API down")
 

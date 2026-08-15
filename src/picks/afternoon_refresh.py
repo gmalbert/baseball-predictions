@@ -13,46 +13,49 @@ Thresholds for "significant" movement (configurable):
     - Spread:     |point_move| >= 0.5 (half-run shift)
     - Totals:     |point_move| >= 0.5 (half-run shift in posted total)
 """
+
 from __future__ import annotations
 
 import logging
 from datetime import date
-from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
 from src.ingestion.mlb_stats import fetch_todays_probable_pitchers
 from src.ingestion.odds import fetch_current_odds, get_consensus_line
 from src.ingestion.weather import fetch_weather_for_games
-from src.models.underdog_model import predict_moneyline
+from src.models.manifest import quarantine_reason
 from src.models.spread_model import predict_spread
 from src.models.totals_model import predict_totals
+from src.models.underdog_model import predict_moneyline
 from src.picks.daily_pipeline import (
-    MODEL_DIR,
     MIN_CONFIDENCE,
     MIN_EDGE_SPREAD,
     MIN_EDGE_TOTALS,
     MIN_EDGE_UNDERDOG,
+    MODEL_DIR,
     PROCESSED_DIR,
+    TOTALS_MODEL_FILENAME,
     _build_todays_features,
     _filter_picks,
     _format_picks,
     _pivot_odds,
     _save_consensus_snapshot,
+    write_pipeline_status,
 )
 
 logger = logging.getLogger(__name__)
 
 # Line-movement thresholds
-MONEYLINE_MOVE_THRESHOLD: int = 10   # American-odds points (absolute)
-SPREAD_MOVE_THRESHOLD: float = 0.5   # run-line point shift
-TOTAL_MOVE_THRESHOLD: float = 0.5    # posted-total point shift
+MONEYLINE_MOVE_THRESHOLD: int = 10  # American-odds points (absolute)
+SPREAD_MOVE_THRESHOLD: float = 0.5  # run-line point shift
+TOTAL_MOVE_THRESHOLD: float = 0.5  # posted-total point shift
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def detect_line_movement(
     morning_consensus: pd.DataFrame,
@@ -84,15 +87,25 @@ def detect_line_movement(
 
     merged["significant"] = ml_move | sp_move | tot_move
 
-    return merged[[
-        "game_id", "away_team", "home_team", "market", "outcome_name",
-        "median_price_am", "median_price_pm", "price_move",
-        "median_point_am", "median_point_pm", "point_move",
-        "significant",
-    ]]
+    return merged[
+        [
+            "game_id",
+            "away_team",
+            "home_team",
+            "market",
+            "outcome_name",
+            "median_price_am",
+            "median_price_pm",
+            "price_move",
+            "median_point_am",
+            "median_point_pm",
+            "point_move",
+            "significant",
+        ]
+    ]
 
 
-def afternoon_picks_refresh(target_date: Optional[date] = None) -> dict:
+def afternoon_picks_refresh(target_date: date | None = None) -> dict:
     """Re-fetch odds, detect line movement, and update picks for moved games.
 
     Returns:
@@ -104,7 +117,7 @@ def afternoon_picks_refresh(target_date: Optional[date] = None) -> dict:
     logger.info("Starting afternoon picks refresh for %s", target_date)
 
     # ---- 1. Re-fetch odds ---------------------------------------------------
-    odds_raw = fetch_current_odds()
+    odds_raw = fetch_current_odds(target_date=target_date)
     afternoon_consensus = get_consensus_line(odds_raw)
     _save_consensus_snapshot(afternoon_consensus, target_date, label="afternoon")
 
@@ -133,8 +146,26 @@ def afternoon_picks_refresh(target_date: Optional[date] = None) -> dict:
         )
         moved_game_ids = set(afternoon_consensus["game_id"].unique())
 
+    artifacts = [
+        MODEL_DIR / "moneyline_xgb_v1.joblib",
+        MODEL_DIR / "spread_xgb_v1.joblib",
+        MODEL_DIR / TOTALS_MODEL_FILENAME,
+    ]
+    incompatible = {
+        artifact.name: quarantine_reason(artifact, artifact.with_suffix(".manifest.json"))
+        for artifact in artifacts
+    }
+    incompatible = {name: reason for name, reason in incompatible.items() if reason}
+    if incompatible:
+        notes = "Afternoon refresh blocked by incompatible model bundle: " + ", ".join(
+            f"{name}={reason}" for name, reason in incompatible.items()
+        )
+        logger.error(notes)
+        write_pipeline_status("model_incompatible", target_date, notes)
+        return {}
+
     # ---- 3. Re-run models for affected games --------------------------------
-    schedule = fetch_todays_probable_pitchers()
+    schedule = fetch_todays_probable_pitchers(target_date)
     weather = fetch_weather_for_games(schedule)
     game_odds = _pivot_odds(afternoon_consensus)
     features = _build_todays_features(schedule, game_odds, weather)
@@ -146,34 +177,43 @@ def afternoon_picks_refresh(target_date: Optional[date] = None) -> dict:
 
     picks: dict = {}
 
-    underdog_preds = predict_moneyline(
-        model_or_path=MODEL_DIR / "moneyline_xgb_v1.joblib",
-        game_features=features_moved,
-        home_ml_col="home_moneyline",
-        away_ml_col="away_moneyline",
-    )
-    picks["underdog"] = _format_picks(
-        _filter_picks(underdog_preds, MIN_EDGE_UNDERDOG, MIN_CONFIDENCE), "underdog"
-    )
+    try:
+        underdog_preds = predict_moneyline(
+            model_or_path=artifacts[0],
+            game_features=features_moved,
+            home_ml_col="home_moneyline",
+            away_ml_col="away_moneyline",
+        )
+        picks["underdog"] = _format_picks(
+            _filter_picks(underdog_preds, MIN_EDGE_UNDERDOG, MIN_CONFIDENCE), "underdog"
+        )
 
-    spread_preds = predict_spread(
-        model_or_path=MODEL_DIR / "spread_xgb_v1.joblib",
-        game_features=features_moved,
-        spread_price_col="home_spread_price",
-    )
-    picks["spread"] = _format_picks(
-        _filter_picks(spread_preds, MIN_EDGE_SPREAD, MIN_CONFIDENCE), "spread"
-    )
+        spread_preds = predict_spread(
+            model_or_path=artifacts[1],
+            game_features=features_moved,
+            spread_price_col="home_spread_price",
+            away_spread_price_col="away_spread_price",
+            home_point_col="home_spread_point",
+            away_point_col="away_spread_point",
+        )
+        picks["spread"] = _format_picks(
+            _filter_picks(spread_preds, MIN_EDGE_SPREAD, MIN_CONFIDENCE), "spread"
+        )
 
-    totals_preds = predict_totals(
-        model_or_path=MODEL_DIR / "totals_lgbm_v1.joblib",
-        game_features=features_moved,
-        over_price_col="over_price",
-        under_price_col="under_price",
-    )
-    picks["over_under"] = _format_picks(
-        _filter_picks(totals_preds, MIN_EDGE_TOTALS, MIN_CONFIDENCE), "over_under"
-    )
+        totals_preds = predict_totals(
+            model_or_path=artifacts[2],
+            game_features=features_moved,
+            over_price_col="over_price",
+            under_price_col="under_price",
+        )
+        picks["over_under"] = _format_picks(
+            _filter_picks(totals_preds, MIN_EDGE_TOTALS, MIN_CONFIDENCE), "over_under"
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        notes = f"Afternoon validated model bundle failed closed: {type(exc).__name__}: {exc}"
+        logger.exception(notes)
+        write_pipeline_status("model_incompatible", target_date, notes)
+        return {}
 
     # ---- 4. Merge updated picks back into daily CSV -------------------------
     _merge_afternoon_picks(picks, moved_game_ids, target_date)
@@ -193,6 +233,7 @@ def afternoon_picks_refresh(target_date: Optional[date] = None) -> dict:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _merge_afternoon_picks(picks: dict, moved_game_ids: set, target_date: date) -> None:
     """Replace morning picks for moved games with the revised afternoon picks."""
     all_new = [p for pick_list in picks.values() for p in pick_list]
@@ -203,7 +244,7 @@ def _merge_afternoon_picks(picks: dict, moved_game_ids: set, target_date: date) 
 
     new_df = pd.DataFrame(all_new) if all_new else pd.DataFrame()
     if not new_df.empty:
-        new_df["date"] = target_date.isoformat()
+        new_df["game_date"] = target_date.isoformat()
         new_df["source"] = "afternoon_refresh"
 
     picks_path = PROCESSED_DIR / f"picks_{target_date.isoformat()}.csv"
@@ -229,18 +270,28 @@ def _log_movements(significant: pd.DataFrame) -> None:
         if row["market"] == "h2h":
             logger.info(
                 "  ML move  | %s @ %s | %s: %+.0f → %+.0f (Δ%+.0f pts)",
-                row["away_team"], row["home_team"], row["outcome_name"],
-                row["median_price_am"], row["median_price_pm"], row["price_move"],
+                row["away_team"],
+                row["home_team"],
+                row["outcome_name"],
+                row["median_price_am"],
+                row["median_price_pm"],
+                row["price_move"],
             )
         else:
             logger.info(
                 "  %s move | %s @ %s | %s: %.1f → %.1f (Δ%.1f)",
-                row["market"], row["away_team"], row["home_team"], row["outcome_name"],
-                row["median_point_am"], row["median_point_pm"], row["point_move"],
+                row["market"],
+                row["away_team"],
+                row["home_team"],
+                row["outcome_name"],
+                row["median_point_am"],
+                row["median_point_pm"],
+                row["point_move"],
             )
 
 
 if __name__ == "__main__":
     import logging as _logging
+
     _logging.basicConfig(level=_logging.INFO)
     afternoon_picks_refresh()

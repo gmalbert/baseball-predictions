@@ -1,0 +1,12 @@
+dataset: fact_sample_eligibility
+version: 1.0.0
+primary_key: [eligibility_id]
+required:
+  eligibility_id: string
+  game_id: string
+  market_id: string
+  selection: string
+  as_of_time: timestamp[us, tz=UTC]
+  eligible: bool
+  reason_codes: list[string]
+  quality_status: string

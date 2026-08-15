@@ -1,8 +1,9 @@
-﻿"""
+"""
 scripts/export_best_bets.py — MLB (baseball-predictions)
 Reads data_files/processed/picks_today.csv and its metadata (written by src/picks/daily_pipeline.py)
 and writes data_files/best_bets_today.json in the unified Sports Picks Grid schema.
 """
+
 import json
 import os
 from datetime import date, datetime, timezone
@@ -16,7 +17,13 @@ SRC_PATH = Path("data_files/processed/picks_today.csv")
 META_PATH = Path("data_files/processed/picks_today.meta.json")
 
 
-def _write(bets: list, notes: str = "", status: str | None = None, target_date: str | None = None, picks_count: int | None = None) -> None:
+def _write(
+    bets: list,
+    notes: str = "",
+    status: str | None = None,
+    target_date: str | None = None,
+    picks_count: int | None = None,
+) -> None:
     if status is None:
         status = "ok" if bets else "no_picks"
     payload: dict = {
@@ -73,7 +80,13 @@ def main() -> None:
         return
 
     if not SRC_PATH.exists():
-        _write([], "Canonical pick snapshot not found — daily pipeline may not have run yet", status="pipeline_pending", target_date=str(today), picks_count=0)
+        _write(
+            [],
+            "Canonical pick snapshot not found — daily pipeline may not have run yet",
+            status="pipeline_pending",
+            target_date=str(today),
+            picks_count=0,
+        )
         return
 
     metadata = {}
@@ -81,24 +94,49 @@ def main() -> None:
         try:
             metadata = json.loads(META_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
-            _write([], f"Failed to read {META_PATH}: {e}", status="pipeline_failed", target_date=str(today), picks_count=0)
+            _write(
+                [],
+                f"Failed to read {META_PATH}: {e}",
+                status="pipeline_failed",
+                target_date=str(today),
+                picks_count=0,
+            )
             return
 
     status = metadata.get("status", "ok")
     target_date = metadata.get("target_date", str(today))
     if status in {"pipeline_failed", "no_games", "no_qualifying_picks"}:
-        _write([], metadata.get("notes", status), status=status, target_date=target_date, picks_count=metadata.get("picks_count", 0))
+        _write(
+            [],
+            metadata.get("notes", status),
+            status=status,
+            target_date=target_date,
+            picks_count=metadata.get("picks_count", 0),
+        )
         return
 
     try:
         import pandas as pd
+
         df = pd.read_csv(SRC_PATH)
     except Exception as e:
-        _write([], f"Failed to read {SRC_PATH}: {e}", status="pipeline_failed", target_date=target_date, picks_count=0)
+        _write(
+            [],
+            f"Failed to read {SRC_PATH}: {e}",
+            status="pipeline_failed",
+            target_date=target_date,
+            picks_count=0,
+        )
         return
 
     if df.empty:
-        _write([], f"No MLB picks for {today}", status="no_qualifying_picks", target_date=target_date, picks_count=0)
+        _write(
+            [],
+            f"No MLB picks for {today}",
+            status="no_qualifying_picks",
+            target_date=target_date,
+            picks_count=0,
+        )
         return
 
     # Filter to today
@@ -120,7 +158,13 @@ def main() -> None:
         df = df[df["badge"].isin(["BET", "LEAN"])]
 
     if df.empty:
-        _write([], f"No qualifying MLB picks for {today}", status="no_qualifying_picks", target_date=target_date, picks_count=0)
+        _write(
+            [],
+            f"No qualifying MLB picks for {today}",
+            status="no_qualifying_picks",
+            target_date=target_date,
+            picks_count=0,
+        )
         return
 
     bets = []
@@ -134,9 +178,14 @@ def main() -> None:
         tier = _tier_from_badge(badge, conf)
 
         bet_type_raw = str(row.get("bet_type", "Moneyline"))
-        bt_map = {"Moneyline": "Moneyline", "moneyline": "Moneyline",
-                  "Run Line": "Spread", "Spread": "Spread",
-                  "Over/Under": "Over/Under", "Total": "Over/Under"}
+        bt_map = {
+            "Moneyline": "Moneyline",
+            "moneyline": "Moneyline",
+            "Run Line": "Spread",
+            "Spread": "Spread",
+            "Over/Under": "Over/Under",
+            "Total": "Over/Under",
+        }
         bet_type = bt_map.get(bet_type_raw, bet_type_raw)
 
         bet: dict = {
@@ -150,7 +199,9 @@ def main() -> None:
             "confidence": conf,
             "edge": edge,
             "tier": tier,
-            "odds": int(row["odds"]) if "odds" in row and _safe_float(row.get("odds")) is not None else None,
+            "odds": int(row["odds"])
+            if "odds" in row and _safe_float(row.get("odds")) is not None
+            else None,
             "line": _safe_float(row.get("line")),
             "notes": str(row.get("notes", "")) or None,
         }

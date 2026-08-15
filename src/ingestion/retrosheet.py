@@ -13,19 +13,19 @@ from .config import config
 # Key column indices in Retrosheet game logs.
 # Full spec: https://www.retrosheet.org/gamelogs/glfields.txt
 GAMELOG_COLS: dict[int, str] = {
-    0:   "date",
-    1:   "game_number",
-    2:   "day_of_week",
-    3:   "away_team",
-    4:   "away_league",
-    6:   "home_team",
-    7:   "home_league",
-    9:   "away_score",
-    10:  "home_score",
-    12:  "day_night",
-    16:  "park_id",
-    17:  "attendance",
-    18:  "duration_minutes",
+    0: "date",
+    1: "game_number",
+    2: "day_of_week",
+    3: "away_team",
+    4: "away_league",
+    6: "home_team",
+    7: "home_league",
+    9: "away_score",
+    10: "home_score",
+    12: "day_night",
+    16: "park_id",
+    17: "attendance",
+    18: "duration_minutes",
     # Starting pitchers
     101: "away_starting_pitcher_id",
     102: "away_starting_pitcher_name",
@@ -86,9 +86,7 @@ def download_all_gamelogs() -> pd.DataFrame:
 
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
-        combined.to_csv(
-            config.raw_dir / "gamelogs" / "retrosheet_all.csv", index=False
-        )
+        combined.to_csv(config.raw_dir / "gamelogs" / "retrosheet_all.csv", index=False)
         print(f"\nCombined: {len(combined)} total games")
         return combined
     return pd.DataFrame()

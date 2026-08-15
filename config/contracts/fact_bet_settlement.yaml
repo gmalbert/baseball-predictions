@@ -1,0 +1,11 @@
+dataset: fact_bet_settlement
+version: 2.0.0
+primary_key: [execution_id, settlement_version]
+required:
+  execution_id: string
+  settled_at: timestamp[us, tz=UTC]
+  result: string
+  profit_loss: decimal128
+  settlement_rule: string
+  source: string
+  settlement_version: int32
