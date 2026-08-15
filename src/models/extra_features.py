@@ -594,6 +594,10 @@ def bullpen_fatigue_features(min_year: int, max_year: int) -> pd.DataFrame:
     p = p[p["p_gs"] != 1.0].copy()  # relief appearances only
     needed = {"gid", "id", "team", "vishome", "p_ipouts", "date"}
     p = p[[c for c in needed if c in p.columns]].copy()
+    # Category-dtyped keys trigger pandas' categorical groupby reindex
+    # (cartesian product of ALL category levels) which OOMs here.
+    for col in ("gid", "id", "team", "vishome"):
+        p[col] = p[col].astype(object)
     p["date"] = pd.to_datetime(p["date"].astype(str), format="%Y%m%d", errors="coerce")
     p["ip"] = pd.to_numeric(p["p_ipouts"], errors="coerce").fillna(0) / 3
     p["season"] = p["date"].dt.year
