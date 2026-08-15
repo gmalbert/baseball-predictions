@@ -133,6 +133,10 @@ def fetch_schedule_for_date(
             }
         )
     frame = pd.DataFrame(rows)
+    # MLB StatsAPI returns scores as strings for in-progress games and ints
+    # for completed ones; normalize so pyarrow can write a single column type.
+    for col in ("away_score", "home_score"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
     _archive_schedule_observation(
         frame,
         observed_at=observed_at,
