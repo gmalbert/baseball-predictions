@@ -6,6 +6,7 @@
 python-dotenv>=1.0
 pandas>=2.1
 numpy>=1.24
+pydantic>=2.10   # v2 contracts / config / picks (was previously only under optional API)
 
 # ---- Data Storage ----
 pyarrow>=14.0           # Parquet read/write
@@ -44,7 +45,6 @@ pytesseract>=0.3.10     # Tesseract OCR wrapper (requires tesseract-ocr system p
 # ---- Optional: REST API (uncomment if needed) ----
 # fastapi>=0.109
 # uvicorn[standard]>=0.27
-# pydantic>=2.5
 
 # ---- Optional: PostgreSQL (uncomment if scaling beyond flat files) ----
 # sqlalchemy>=2.0
