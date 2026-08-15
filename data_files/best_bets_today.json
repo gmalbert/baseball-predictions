@@ -1,15 +1,15 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-08-15T20:21:55.818981+00:00",
+    "generated_at": "2026-08-15T20:43:52.764338+00:00",
     "model_version": "1.0.0",
     "season": "2026",
     "status": "pipeline_failed",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "d960a004e8faef2bee4e4f29739faccb35b98b8f",
+    "source_commit": "e07d42c2b7c7a38d4dcf1485fc2273fe0082293a",
     "total_bets": 0,
-    "notes": "ArrowInvalid: (\"Could not convert '0' with type str: tried to convert to int64\", 'Conversion failed for column away_score with type object')",
+    "notes": "ValidationError: 1 validation error for Quote\npoint\n  Input should be a finite number [type=finite_number, input_value=Decimal('NaN'), input_type=Decimal]\n    For further information visit https://errors.pydantic.dev/2.13/v/finite_number",
     "target_date": "2026-08-15",
     "picks_count": 0
   },
