@@ -1,6 +1,8 @@
 """Page: Today — today's schedule, pitcher matchups & odds detail."""
+
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import datetime
@@ -11,28 +13,26 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from page_utils import (
-    ROOT,
-    READABLE_COLS,
     _MLB_TO_RETRO,
-    _fetch_todays_schedule,
-    _fetch_team_standings,
-    _fetch_pitcher_stats,
+    READABLE_COLS,
+    ROOT,
     _fetch_espn_odds,
-    _load_latest_odds,
-    _estimate_win_prob,
-    _prob_bar_html,
-    _load_game_context_cache,
+    _fetch_game_umpires,
+    _fetch_pitcher_stats,
     _fetch_pitcher_throw_hand,
+    _fetch_retrosheet_game_umpires,
     _fetch_team_il_players,
     _fetch_team_rest_days,
-    _fetch_game_umpires,
-    _fetch_retrosheet_game_umpires,
+    _fetch_team_standings,
+    _fetch_todays_schedule,
+    _load_game_context_cache,
+    _load_latest_odds,
     _lookup_ump_retro_id,
-    render_sidebar,
-    init_session_state,
     add_betting_oracle_footer,
+    init_session_state,
+    render_sidebar,
 )
-from retrosheet import head_to_head, rolling_team_form, load_gameinfo
+from retrosheet import head_to_head, load_gameinfo, rolling_team_form
 from src.ingestion.weather import fetch_forecast
 
 init_session_state()
@@ -40,30 +40,32 @@ render_sidebar(show_year_filter=False)
 
 _games_today = _fetch_todays_schedule()
 
+
 def get_dataframe_height(df, row_height=35, header_height=38, padding=2, max_height=600):
     """
     Calculate the optimal height for a Streamlit dataframe based on number of rows.
-    
+
     Args:
         df (pd.DataFrame): The dataframe to display
         row_height (int): Height per row in pixels. Default: 35
         header_height (int): Height of header row in pixels. Default: 38
         padding (int): Extra padding in pixels. Default: 2
         max_height (int): Maximum height cap in pixels. Default: 600 (None for no limit)
-    
+
     Returns:
         int: Calculated height in pixels
-    
+
     Example:
         height = get_dataframe_height(my_df)
         st.dataframe(my_df, height=height)
     """
     num_rows = len(df)
     calculated_height = (num_rows * row_height) + header_height + padding
-    
+
     if max_height is not None:
         return min(calculated_height, max_height)
     return calculated_height
+
 
 # ── Game Detail View ──────────────────────────────────────────────────────────
 if st.session_state["schedule_selected_game"] is not None:
@@ -80,13 +82,13 @@ if st.session_state["schedule_selected_game"] is not None:
     st.markdown(f"## {away_full} @ {home_full}")
 
     status = g.get("status", "Scheduled")
-    venue  = g.get("venue_name", "—")
+    venue = g.get("venue_name", "—")
     series = g.get("series_description", "")
     gtime_raw = g.get("game_datetime", "")
     if gtime_raw:
         try:
             dt_utc = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
-            dt_et  = dt_utc - datetime.timedelta(hours=4)
+            dt_et = dt_utc - datetime.timedelta(hours=4)
             gtime_str = dt_et.strftime("%I:%M %p ET")
         except Exception:
             gtime_str = gtime_raw
@@ -141,7 +143,8 @@ if st.session_state["schedule_selected_game"] is not None:
         if away_sp_stats:
             st.dataframe(
                 pd.DataFrame(away_sp_stats.items(), columns=["Stat", "Value"]),
-                hide_index=True, width="stretch",
+                hide_index=True,
+                width="stretch",
             )
         elif away_sp != "TBD":
             st.caption("Stats not yet available for this season.")
@@ -150,7 +153,8 @@ if st.session_state["schedule_selected_game"] is not None:
         if home_sp_stats:
             st.dataframe(
                 pd.DataFrame(home_sp_stats.items(), columns=["Stat", "Value"]),
-                hide_index=True, width="stretch",
+                hide_index=True,
+                width="stretch",
             )
         elif home_sp != "TBD":
             st.caption("Stats not yet available for this season.")
@@ -162,12 +166,16 @@ if st.session_state["schedule_selected_game"] is not None:
     _ctx = _load_game_context_cache()
 
     # Venue / park row (full width)
-    _pf      = _ctx["park_factors"].get(home_retro)
+    _pf = _ctx["park_factors"].get(home_retro)
     _ump_avg = _ctx["ump_park_avg"].get(home_retro)
     _dn_data = _ctx["daynight"]
 
-    _pf_label  = f"{_pf:.3f}" if _pf else "N/A"
-    _pf_delta  = f"{'↑ hitter-friendly' if _pf and _pf > 1.05 else ('↓ pitcher-friendly' if _pf and _pf < 0.95 else '≈ neutral')}" if _pf else ""
+    _pf_label = f"{_pf:.3f}" if _pf else "N/A"
+    _pf_delta = (
+        f"{'↑ hitter-friendly' if _pf and _pf > 1.05 else ('↓ pitcher-friendly' if _pf and _pf < 0.95 else '≈ neutral')}"
+        if _pf
+        else ""
+    )
     _ump_label = f"{_ump_avg:.1f} R/G" if _ump_avg else "N/A"
 
     _ctx_v1, _ctx_v2, _ctx_v3 = st.columns(3)
@@ -187,13 +195,13 @@ if st.session_state["schedule_selected_game"] is not None:
     # Retrieve today's SP handedness
     _home_sp_hand = _fetch_pitcher_throw_hand(home_sp)
     _away_sp_hand = _fetch_pitcher_throw_hand(away_sp)
-    _home_plat    = _ctx["platoon"].get(home_retro, {})
-    _away_plat    = _ctx["platoon"].get(away_retro, {})
+    _home_plat = _ctx["platoon"].get(home_retro, {})
+    _away_plat = _ctx["platoon"].get(away_retro, {})
 
     # Home batters face away SP; away batters face home SP
     def _plat_adv(bat_pct_left: float, sp_throws: str) -> str:
         if sp_throws == "L":
-            adv = 1 - bat_pct_left   # right-handed batters advantage vs LHP
+            adv = 1 - bat_pct_left  # right-handed batters advantage vs LHP
             return f"{adv:.0%} RHB vs LHP"
         elif sp_throws == "R":
             return f"{bat_pct_left:.0%} LHB vs RHP"
@@ -211,9 +219,9 @@ if st.session_state["schedule_selected_game"] is not None:
 
     # ── ⚖️ Umpire Profile ─────────────────────────────────────────────────────
     with st.expander("⚖️ Umpire Profile", expanded=True):
-        _ump_stats   = _ctx.get("umpire_stats", {})
-        _game_pk     = g.get("game_id")
-        _game_date   = g.get("game_date") or None
+        _ump_stats = _ctx.get("umpire_stats", {})
+        _game_pk = g.get("game_id")
+        _game_date = g.get("game_date") or None
         if not _game_date:
             _gdt = g.get("game_datetime", "")
             if "T" in _gdt:
@@ -227,19 +235,19 @@ if st.session_state["schedule_selected_game"] is not None:
             if _retro_umps:
                 _umps = {
                     "home_plate": _umps.get("home_plate") or _retro_umps.get("home_plate", ""),
-                    "first":      _umps.get("first") or _retro_umps.get("first", ""),
-                    "second":     _umps.get("second") or _retro_umps.get("second", ""),
-                    "third":      _umps.get("third") or _retro_umps.get("third", ""),
+                    "first": _umps.get("first") or _retro_umps.get("first", ""),
+                    "second": _umps.get("second") or _retro_umps.get("second", ""),
+                    "third": _umps.get("third") or _retro_umps.get("third", ""),
                 }
 
-        _plate_name  = _umps.get("home_plate", "")
-        _1b_name     = _umps.get("first", "")
-        _2b_name     = _umps.get("second", "")
-        _3b_name     = _umps.get("third", "")
+        _plate_name = _umps.get("home_plate", "")
+        _1b_name = _umps.get("first", "")
+        _2b_name = _umps.get("second", "")
+        _3b_name = _umps.get("third", "")
 
         # Try to cross-reference the plate ump name or ID with Retrosheet data
         _plate_retro = _lookup_ump_retro_id(_plate_name, _ump_stats)
-        _plate_data  = _ump_stats.get(_plate_retro, {}) if _plate_retro else {}
+        _plate_data = _ump_stats.get(_plate_retro, {}) if _plate_retro else {}
 
         _uc1, _uc2, _uc3 = st.columns(3)
         with _uc1:
@@ -265,7 +273,7 @@ if st.session_state["schedule_selected_game"] is not None:
                 f"{_plate_data['games']:,}",
                 help="Total games officiated in the Retrosheet database.",
             )
-            _over_val  = _plate_data["over_mean"]
+            _over_val = _plate_data["over_mean"]
             _over_sign = f"{_over_val:+.2f}"
             _m3.metric(
                 "↕ vs League Avg",
@@ -278,11 +286,17 @@ if st.session_state["schedule_selected_game"] is not None:
             _m4.metric(
                 "📈 Trend (20g)",
                 f"{_trend_val:+.2f}",
-                delta="Rising" if _trend_val > 0.2 else ("Falling" if _trend_val < -0.2 else "Stable"),
+                delta="Rising"
+                if _trend_val > 0.2
+                else ("Falling" if _trend_val < -0.2 else "Stable"),
                 delta_color="normal",
                 help="Difference in runs/game between the last 20 and the prior 20 games for this umpire.",
             )
-            _tend_icon = "🔺 Higher-run environment" if _plate_data["above_avg"] else "🔻 Lower-run environment"
+            _tend_icon = (
+                "🔺 Higher-run environment"
+                if _plate_data["above_avg"]
+                else "🔻 Lower-run environment"
+            )
             st.caption(f"**Tendency:** {_tend_icon}  ·  Retrosheet ID: `{_plate_retro}`")
         elif _plate_name:
             st.caption(
@@ -310,13 +324,13 @@ if st.session_state["schedule_selected_game"] is not None:
             _rest = _fetch_team_rest_days(_team_full)
             if _rest is None:
                 _rest_label = "N/A"
-                _rest_help  = "Could not determine — check schedule."
+                _rest_help = "Could not determine — check schedule."
             elif _rest == 0:
                 _rest_label = "Back-to-back"
-                _rest_help  = "Played yesterday."
+                _rest_help = "Played yesterday."
             else:
                 _rest_label = f"{_rest}d rest"
-                _rest_help  = f"{_rest} day(s) since last game."
+                _rest_help = f"{_rest} day(s) since last game."
 
             # Bullpen load
             _bp_ipg = _ctx["bullpen_ip_pg"].get(_team_retro)
@@ -324,7 +338,7 @@ if st.session_state["schedule_selected_game"] is not None:
 
             # Day/night tendency
             _dn_team = _dn_data.get(_team_retro, {})
-            _day_w   = _dn_team.get("day")
+            _day_w = _dn_team.get("day")
             _night_w = _dn_team.get("night")
             _dn_label = (
                 f"Day {_day_w:.0%} / Night {_night_w:.0%}"
@@ -334,10 +348,16 @@ if st.session_state["schedule_selected_game"] is not None:
 
             r1c1, r1c2 = _col.columns(2)
             r1c1.metric("📅 Rest", _rest_label, help=_rest_help)
-            r1c2.metric("💪 Bullpen IP/G", _bp_label,
-                        help="Avg relief innings/game (last 2 seasons). Higher = bullpen-heavy team.")
-            _col.metric("🌙 Day/Night W%", _dn_label,
-                        help="Historical win % in day vs night games (last 3 seasons).")
+            r1c2.metric(
+                "💪 Bullpen IP/G",
+                _bp_label,
+                help="Avg relief innings/game (last 2 seasons). Higher = bullpen-heavy team.",
+            )
+            _col.metric(
+                "🌙 Day/Night W%",
+                _dn_label,
+                help="Historical win % in day vs night games (last 3 seasons).",
+            )
 
             # IL players
             _il = _fetch_team_il_players(_team_full)
@@ -365,38 +385,54 @@ if st.session_state["schedule_selected_game"] is not None:
         b_w = len(h2h_detail) - a_w
         tot = len(h2h_detail)
         hc1, hc2, hc3 = st.columns(3)
-        hc1.metric(f"{away_retro} wins", f"{a_w}  ({a_w/tot:.0%})")
-        hc2.metric(f"{home_retro} wins", f"{b_w}  ({b_w/tot:.0%})")
+        hc1.metric(f"{away_retro} wins", f"{a_w}  ({a_w / tot:.0%})")
+        hc2.metric(f"{home_retro} wins", f"{b_w}  ({b_w / tot:.0%})")
         hc3.metric("Games played", tot)
 
         fig_h2h = go.Figure()
-        fig_h2h.add_trace(go.Scatter(
-            x=h2h_detail["date"], y=h2h_detail["a_runs"],
-            mode="markers+lines", name=f"{away_retro} runs",
-            line=dict(color="#1f77b4"),
-        ))
-        fig_h2h.add_trace(go.Scatter(
-            x=h2h_detail["date"], y=h2h_detail["b_runs"],
-            mode="markers+lines", name=f"{home_retro} runs",
-            line=dict(color="#d62728"),
-        ))
+        fig_h2h.add_trace(
+            go.Scatter(
+                x=h2h_detail["date"],
+                y=h2h_detail["a_runs"],
+                mode="markers+lines",
+                name=f"{away_retro} runs",
+                line=dict(color="#1f77b4"),
+            )
+        )
+        fig_h2h.add_trace(
+            go.Scatter(
+                x=h2h_detail["date"],
+                y=h2h_detail["b_runs"],
+                mode="markers+lines",
+                name=f"{home_retro} runs",
+                line=dict(color="#d62728"),
+            )
+        )
         fig_h2h.update_layout(
             title=f"{away_retro} vs {home_retro} — Runs per game",
-            xaxis_title="Date", yaxis_title="Runs",
+            xaxis_title="Date",
+            yaxis_title="Runs",
         )
         st.plotly_chart(fig_h2h, width="stretch")
 
         h2h_detail["season"] = h2h_detail["date"].dt.year
-        by_szn = h2h_detail.groupby("season").agg(
-            away_wins=("a_win", "sum"),
-            games=("a_win", "count"),
-        ).reset_index()
+        by_szn = (
+            h2h_detail.groupby("season")
+            .agg(
+                away_wins=("a_win", "sum"),
+                games=("a_win", "count"),
+            )
+            .reset_index()
+        )
         by_szn["away_wpct"] = by_szn["away_wins"] / by_szn["games"]
         fig_szn = px.bar(
-            by_szn, x="season", y="away_wpct",
+            by_szn,
+            x="season",
+            y="away_wpct",
             title=f"{away_retro} win % vs {home_retro} by season",
             labels={"away_wpct": f"{away_retro} W%", "season": "Season"},
-            color="away_wpct", color_continuous_scale="RdYlGn",
+            color="away_wpct",
+            color_continuous_scale="RdYlGn",
         )
         fig_szn.add_hline(y=0.5, line_dash="dot", line_color="gray")
         fig_szn.update_layout(coloraxis_showscale=False)
@@ -407,7 +443,8 @@ if st.session_state["schedule_selected_game"] is not None:
                 h2h_detail[["date", "visteam", "hometeam", "vruns", "hruns", "a_win"]]
                 .assign(date=lambda d: d["date"].dt.date)
                 .rename(columns={**READABLE_COLS, "a_win": f"{away_retro} Win"}),
-                hide_index=True, width="stretch",
+                hide_index=True,
+                width="stretch",
             )
 
     st.divider()
@@ -427,10 +464,14 @@ if st.session_state["schedule_selected_game"] is not None:
             else:
                 recent = form.tail(20)
                 fig_form = px.line(
-                    recent, x="date", y="roll_W_10",
+                    recent,
+                    x="date",
+                    y="roll_W_10",
                     title=f"{team_retro} — 10-game win rate",
                     labels={"roll_W_10": "Win rate (10g)", "date": ""},
-                    color_discrete_sequence=["#1f77b4"] if team_retro == away_retro else ["#d62728"],
+                    color_discrete_sequence=["#1f77b4"]
+                    if team_retro == away_retro
+                    else ["#d62728"],
                 )
                 fig_form.add_hline(y=0.5, line_dash="dot", line_color="gray")
                 fig_form.update_layout(height=250, margin=dict(t=30, b=10))
@@ -480,7 +521,9 @@ if st.session_state["schedule_selected_game"] is not None:
                 unsafe_allow_html=True,
             )
     else:
-        st.info("No ESPN odds found for this game yet. Odds typically open 1–2 days before game time.")
+        st.info(
+            "No ESPN odds found for this game yet. Odds typically open 1–2 days before game time."
+        )
 
     _odds_csv = _load_latest_odds()
 
@@ -518,7 +561,7 @@ if st.session_state["schedule_selected_game"] is not None:
         st.markdown("**Model Weather Flags**")
         _dome_flag_defs = [
             ("Wind Out", None, "Not applicable for domed parks"),
-            ("Wind In",  None, "Not applicable for domed parks"),
+            ("Wind In", None, "Not applicable for domed parks"),
             ("Dome Park", True, "Enclosed/retractable roof park — weather effects are muted"),
             ("Cold Temp", None, "Not applicable for domed parks"),
             ("Hot Temp", None, "Not applicable for domed parks"),
@@ -529,13 +572,13 @@ if st.session_state["schedule_selected_game"] is not None:
             with _dfc[_di % 3]:
                 st.metric(_dn, _format_flag_value(_dv), help=_dh)
     else:
-        _temp_f   = _wx.get("temp_f", 0.0)
+        _temp_f = _wx.get("temp_f", 0.0)
         _wind_mph = _wx.get("wind_mph", 0.0)
-        _precip   = _wx.get("precip_mm", 0.0)
-        _humid    = _wx.get("humidity_pct", 0.0)
-        _cloud    = _wx.get("cloud_cover_pct", 0.0)
-        _is_past  = _game_date_str < datetime.date.today().isoformat()
-        _wx_api   = "archive" if _is_past else "forecast"
+        _precip = _wx.get("precip_mm", 0.0)
+        _humid = _wx.get("humidity_pct", 0.0)
+        _cloud = _wx.get("cloud_cover_pct", 0.0)
+        _is_past = _game_date_str < datetime.date.today().isoformat()
+        _wx_api = "archive" if _is_past else "forecast"
 
         _wx_cols = st.columns(4)
         with _wx_cols[0]:
@@ -555,15 +598,23 @@ if st.session_state["schedule_selected_game"] is not None:
         # ── Model-derived weather flags ────────────────────────────────────
         st.markdown("**Model Weather Flags**")
         _temp_cold = _temp_f < 50
-        _temp_hot  = _temp_f > 90
-        _overcast  = _cloud > 75
+        _temp_hot = _temp_f > 90
+        _overcast = _cloud > 75
         _flag_defs = [
-            ("Wind Out", None, "Wind blowing toward outfield (park-specific). Not modeled directly."),
-            ("Wind In",  None, "Wind blowing into the infield (park-specific). Not modeled directly."),
+            (
+                "Wind Out",
+                None,
+                "Wind blowing toward outfield (park-specific). Not modeled directly.",
+            ),
+            (
+                "Wind In",
+                None,
+                "Wind blowing into the infield (park-specific). Not modeled directly.",
+            ),
             ("Dome Park", False, "Outdoor park — dome flag is off"),
             ("Cold Temp", _temp_cold, "Temp < 50 °F — offense may be suppressed"),
-            ("Hot Temp",  _temp_hot,  "Temp > 90 °F — offense may be elevated"),
-            ("Overcast",  _overcast,  "Cloud cover > 75% — overcast conditions"),
+            ("Hot Temp", _temp_hot, "Temp > 90 °F — offense may be elevated"),
+            ("Overcast", _overcast, "Cloud cover > 75% — overcast conditions"),
         ]
         _fc = st.columns(3)
         for _i, (_fname, _fval, _fhelp) in enumerate(_flag_defs):
@@ -588,38 +639,65 @@ if st.session_state["schedule_selected_game"] is not None:
                 # load_gameinfo() translates raw codes → full names (e.g. "NYA" → "Yankees"),
                 # so hometeam values match home_retro which comes from _MLB_TO_RETRO.
                 _gi = load_gameinfo()[["gid", "hometeam", "season"]]
-                _venue_wx = (
-                    _wx_hist_df
-                    .merge(_gi, on="gid", how="left")
-                )
+                _venue_wx = _wx_hist_df.merge(_gi, on="gid", how="left")
                 _venue_wx = _venue_wx[_venue_wx["hometeam"] == home_retro]
 
                 if _venue_wx.empty:
                     st.caption("No historical weather rows found for this home team/venue.")
                 else:
-                    _wx_num_cols = [c for c in ["temp_f", "wind_mph", "precip_mm", "humidity_pct", "cloud_cover_pct"] if c in _venue_wx.columns]
-                    _by_season = _venue_wx.groupby("season").agg(
-                        Games=("gid", "count"),
-                        **{c: (c, "mean") for c in _wx_num_cols},
-                    ).reset_index().sort_values("season", ascending=False)
+                    _wx_num_cols = [
+                        c
+                        for c in [
+                            "temp_f",
+                            "wind_mph",
+                            "precip_mm",
+                            "humidity_pct",
+                            "cloud_cover_pct",
+                        ]
+                        if c in _venue_wx.columns
+                    ]
+                    _by_season = (
+                        _venue_wx.groupby("season")
+                        .agg(
+                            Games=("gid", "count"),
+                            **{c: (c, "mean") for c in _wx_num_cols},
+                        )
+                        .reset_index()
+                        .sort_values("season", ascending=False)
+                    )
                     _rename = {
-                        "season": "Season", "temp_f": "Avg Temp (°F)",
-                        "wind_mph": "Avg Wind (mph)", "precip_mm": "Avg Precip (mm)",
-                        "humidity_pct": "Avg Humidity (%)", "cloud_cover_pct": "Avg Cloud (%)",
+                        "season": "Season",
+                        "temp_f": "Avg Temp (°F)",
+                        "wind_mph": "Avg Wind (mph)",
+                        "precip_mm": "Avg Precip (mm)",
+                        "humidity_pct": "Avg Humidity (%)",
+                        "cloud_cover_pct": "Avg Cloud (%)",
                     }
                     st.dataframe(
                         _by_season.rename(columns=_rename)
-                        .round({"Avg Temp (°F)": 1, "Avg Wind (mph)": 1, "Avg Precip (mm)": 2, "Avg Humidity (%)": 1, "Avg Cloud (%)": 1})
+                        .round(
+                            {
+                                "Avg Temp (°F)": 1,
+                                "Avg Wind (mph)": 1,
+                                "Avg Precip (mm)": 2,
+                                "Avg Humidity (%)": 1,
+                                "Avg Cloud (%)": 1,
+                            }
+                        )
                         .reset_index(drop=True),
-                        hide_index=True, width="stretch",
+                        hide_index=True,
+                        width="stretch",
                     )
-                    st.caption(f"Averages across game-time hours (1–9 PM local) · {len(_venue_wx):,} games · {home_retro} home park")
+                    st.caption(
+                        f"Averages across game-time hours (1–9 PM local) · {len(_venue_wx):,} games · {home_retro} home park"
+                    )
             except Exception as _e:
                 st.warning(f"Could not load historical weather: {_e}")
 
     if not _odds_csv.empty:
         with st.expander("📚 Multi-book comparison (Odds API)"):
             import os as _os
+
             # ODDS_API_KEY comes from .env (loaded by src.ingestion.config).
             _has_key = bool(_os.environ.get("ODDS_API_KEY"))
             if _has_key:
@@ -629,33 +707,36 @@ if st.session_state["schedule_selected_game"] is not None:
                     "Showing saved odds data. Set `ODDS_API_KEY` in the .env file "
                     "to enable automatic live fetching."
                 )
-            mask_odds = (
-                _odds_csv["home_team"].str.contains(home_full.split()[-1], case=False, na=False)
-                | _odds_csv["away_team"].str.contains(away_full.split()[-1], case=False, na=False)
-            )
+            mask_odds = _odds_csv["home_team"].str.contains(
+                home_full.split()[-1], case=False, na=False
+            ) | _odds_csv["away_team"].str.contains(away_full.split()[-1], case=False, na=False)
             game_odds = _odds_csv[mask_odds].copy()
             if game_odds.empty:
                 st.caption("No multi-book data for this matchup in the saved file.")
             else:
                 for market_key, market_label in [
-                    ("h2h",     "💵 Moneyline"),
+                    ("h2h", "💵 Moneyline"),
                     ("spreads", "📏 Run Line"),
-                    ("totals",  "📊 Over/Under"),
+                    ("totals", "📊 Over/Under"),
                 ]:
                     mdf = game_odds[game_odds["market"] == market_key]
                     if mdf.empty:
                         continue
                     st.markdown(f"**{market_label}**")
-                    pivot = (
-                        mdf[["bookmaker", "outcome_name", "outcome_price", "outcome_point"]]
-                        .sort_values("bookmaker")
-                    )
+                    pivot = mdf[
+                        ["bookmaker", "outcome_name", "outcome_price", "outcome_point"]
+                    ].sort_values("bookmaker")
                     st.dataframe(
-                        pivot.rename(columns={
-                            "bookmaker": "Book", "outcome_name": "Side",
-                            "outcome_price": "Odds", "outcome_point": "Line",
-                        }),
-                        hide_index=True, width="stretch",
+                        pivot.rename(
+                            columns={
+                                "bookmaker": "Book",
+                                "outcome_name": "Side",
+                                "outcome_price": "Odds",
+                                "outcome_point": "Line",
+                            }
+                        ),
+                        hide_index=True,
+                        width="stretch",
                     )
 
 # ── Schedule List View ────────────────────────────────────────────────────────
@@ -672,27 +753,32 @@ else:
         st.caption(f"{len(_games_today)} game{'s' if len(_games_today) != 1 else ''} today")
 
         _status_badge = {
-            "Final": "🏁", "Game Over": "🏁",
-            "In Progress": "🔴 LIVE", "Scheduled": "🕐",
-            "Pre-Game": "⏳", "Warmup": "⏳",
-            "Delayed": "⚠️", "Suspended": "⚠️",
-            "Postponed": "🚫", "Cancelled": "🚫",
+            "Final": "🏁",
+            "Game Over": "🏁",
+            "In Progress": "🔴 LIVE",
+            "Scheduled": "🕐",
+            "Pre-Game": "⏳",
+            "Warmup": "⏳",
+            "Delayed": "⚠️",
+            "Suspended": "⚠️",
+            "Postponed": "🚫",
+            "Cancelled": "🚫",
         }
 
         for idx, g in enumerate(_games_today):
-            away_name   = g.get("away_name", "Away")
-            home_name   = g.get("home_name", "Home")
-            away_sp     = g.get("away_probable_pitcher", "TBD") or "TBD"
-            home_sp     = g.get("home_probable_pitcher", "TBD") or "TBD"
-            venue       = g.get("venue_name", "—")
-            status      = g.get("status", "Scheduled")
+            away_name = g.get("away_name", "Away")
+            home_name = g.get("home_name", "Home")
+            away_sp = g.get("away_probable_pitcher", "TBD") or "TBD"
+            home_sp = g.get("home_probable_pitcher", "TBD") or "TBD"
+            venue = g.get("venue_name", "—")
+            status = g.get("status", "Scheduled")
             status_icon = _status_badge.get(status, "")
-            gtime_raw   = g.get("game_datetime", "")
+            gtime_raw = g.get("game_datetime", "")
 
             if gtime_raw:
                 try:
-                    dt_utc    = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
-                    dt_et     = dt_utc - datetime.timedelta(hours=4)
+                    dt_utc = datetime.datetime.fromisoformat(gtime_raw.replace("Z", "+00:00"))
+                    dt_et = dt_utc - datetime.timedelta(hours=4)
                     gtime_str = dt_et.strftime("%I:%M %p ET")
                 except Exception:
                     gtime_str = "TBD"
@@ -708,8 +794,7 @@ else:
                 sc1, sc2, sc3 = st.columns([4, 3, 2])
                 with sc1:
                     st.markdown(
-                        f"**{away_name}** @ **{home_name}**{score_str}  \n"
-                        f"<small>🏟 {venue}</small>",
+                        f"**{away_name}** @ **{home_name}**{score_str}  \n<small>🏟 {venue}</small>",
                         unsafe_allow_html=True,
                     )
                 with sc2:
@@ -723,7 +808,7 @@ else:
                     if st.button(
                         "View Details →",
                         key=f"sched_detail_{idx}",
-                        width='stretch',
+                        width="stretch",
                     ):
                         st.session_state["schedule_selected_game"] = g
                         st.rerun()

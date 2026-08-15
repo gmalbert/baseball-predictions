@@ -18,6 +18,7 @@ Usage:
     python scripts/build_savant_model.py
     python scripts/build_savant_model.py --n-bat 8 --n-pit 6
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,8 +31,9 @@ warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 from datetime import date as _date
+
+import pandas as pd
 
 _CUR_YEAR = _date.today().year
 
@@ -41,14 +43,15 @@ PROCESSED.mkdir(parents=True, exist_ok=True)
 # Baseline AUC from the Retrosheet-only models (used for delta display)
 BASELINE_AUC = {
     "moneyline": 0.6253,
-    "spread":    0.6304,
-    "totals":    0.6157,
+    "spread": 0.6304,
+    "totals": 0.6157,
 }
 
 
 # ---------------------------------------------------------------------------
 # Feature matrix builder
 # ---------------------------------------------------------------------------
+
 
 def build_savant_enriched_features(
     n_bat: int = 8,
@@ -85,10 +88,11 @@ def build_savant_enriched_features(
     print(f"  Top {n_pit} pitcher features: {top_pit}")
 
     # Reuse helpers from monte_carlo_features (already tested + working)
-    from scripts.monte_carlo_features import _load_savant_data, _aggregate_team_season
+    from scripts.monte_carlo_features import _aggregate_team_season, _load_savant_data
 
     print("Loading base Retrosheet game features...")
     from src.models.features import build_model_features
+
     games = build_model_features(min_year, max_year)
 
     print("Loading Savant CSVs and building team-season aggregates...")
@@ -111,11 +115,9 @@ def build_savant_enriched_features(
             columns={f"bat_{c}": f"away_bat_{c}" for c in bat_cols_used}
         )
         home_cols = ["season", "hometeam"] + [f"home_bat_{c}" for c in bat_cols_used]
-        away_cols = ["season", "visteam"]  + [f"away_bat_{c}" for c in bat_cols_used]
-        enriched = (
-            enriched
-            .merge(home_bat[home_cols], on=["season", "hometeam"], how="left")
-            .merge(away_bat[away_cols], on=["season", "visteam"],  how="left")
+        away_cols = ["season", "visteam"] + [f"away_bat_{c}" for c in bat_cols_used]
+        enriched = enriched.merge(home_bat[home_cols], on=["season", "hometeam"], how="left").merge(
+            away_bat[away_cols], on=["season", "visteam"], how="left"
         )
 
     if not pit_agg.empty:
@@ -128,16 +130,16 @@ def build_savant_enriched_features(
             columns={f"pit_{c}": f"away_pit_{c}" for c in pit_cols_used}
         )
         home_cols = ["season", "hometeam"] + [f"home_pit_{c}" for c in pit_cols_used]
-        away_cols = ["season", "visteam"]  + [f"away_pit_{c}" for c in pit_cols_used]
-        enriched = (
-            enriched
-            .merge(home_pit[home_cols], on=["season", "hometeam"], how="left")
-            .merge(away_pit[away_cols], on=["season", "visteam"],  how="left")
+        away_cols = ["season", "visteam"] + [f"away_pit_{c}" for c in pit_cols_used]
+        enriched = enriched.merge(home_pit[home_cols], on=["season", "hometeam"], how="left").merge(
+            away_pit[away_cols], on=["season", "visteam"], how="left"
         )
 
-    n_rows_with_savant = enriched[
-        [f"home_bat_{c}" for c in bat_cols_used[:1]]
-    ].notna().all(axis=1).sum() if bat_cols_used else 0
+    n_rows_with_savant = (
+        enriched[[f"home_bat_{c}" for c in bat_cols_used[:1]]].notna().all(axis=1).sum()
+        if bat_cols_used
+        else 0
+    )
     print(f"  Game rows with Savant data: {n_rows_with_savant:,} / {len(enriched):,}")
 
     return enriched, bat_cols_used, pit_cols_used
@@ -147,11 +149,12 @@ def build_savant_enriched_features(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(n_bat: int = 8, n_pit: int = 6) -> None:
     from src.models.features import MONEYLINE_FEATURES, SPREAD_FEATURES, TOTALS_FEATURES
-    from src.models.underdog_model import train_moneyline_model
     from src.models.spread_model import train_spread_model
     from src.models.totals_model import train_totals_model
+    from src.models.underdog_model import train_moneyline_model
 
     print(f"\n=== Building Savant-enriched models (top {n_bat} bat + {n_pit} pit) ===\n")
 
@@ -159,48 +162,56 @@ def main(n_bat: int = 8, n_pit: int = 6) -> None:
 
     # Build Savant column names as they appear in the enriched game DataFrame
     savant_game_cols = (
-        [f"home_bat_{c}" for c in bat_cols] +
-        [f"away_bat_{c}" for c in bat_cols] +
-        [f"home_pit_{c}" for c in pit_cols] +
-        [f"away_pit_{c}" for c in pit_cols]
+        [f"home_bat_{c}" for c in bat_cols]
+        + [f"away_bat_{c}" for c in bat_cols]
+        + [f"home_pit_{c}" for c in pit_cols]
+        + [f"away_pit_{c}" for c in pit_cols]
     )
     savant_game_cols = [c for c in savant_game_cols if c in enriched.columns]
 
     ml_features = [c for c in MONEYLINE_FEATURES + savant_game_cols if c in enriched.columns]
-    sp_features = [c for c in SPREAD_FEATURES    + savant_game_cols if c in enriched.columns]
-    ou_features = [c for c in TOTALS_FEATURES    + savant_game_cols if c in enriched.columns]
+    sp_features = [c for c in SPREAD_FEATURES + savant_game_cols if c in enriched.columns]
+    ou_features = [c for c in TOTALS_FEATURES + savant_game_cols if c in enriched.columns]
 
-    print(f"  Feature counts — ML: {len(ml_features)}  SP: {len(sp_features)}  OU: {len(ou_features)}")
+    print(
+        f"  Feature counts — ML: {len(ml_features)}  SP: {len(sp_features)}  OU: {len(ou_features)}"
+    )
 
     print("\nTraining moneyline model (Savant-enriched)...")
     r_ml = train_moneyline_model(enriched, feature_cols=ml_features)
     delta_ml = r_ml["metrics"]["roc_auc"] - BASELINE_AUC["moneyline"]
-    print(f"  AUC {r_ml['metrics']['roc_auc']:.4f}  ({delta_ml:+.4f} vs baseline {BASELINE_AUC['moneyline']:.4f})")
+    print(
+        f"  AUC {r_ml['metrics']['roc_auc']:.4f}  ({delta_ml:+.4f} vs baseline {BASELINE_AUC['moneyline']:.4f})"
+    )
 
     print("Training spread model (Savant-enriched)...")
     r_sp = train_spread_model(enriched, feature_cols=sp_features)
     delta_sp = r_sp["metrics"]["roc_auc"] - BASELINE_AUC["spread"]
-    print(f"  AUC {r_sp['metrics']['roc_auc']:.4f}  ({delta_sp:+.4f} vs baseline {BASELINE_AUC['spread']:.4f})")
+    print(
+        f"  AUC {r_sp['metrics']['roc_auc']:.4f}  ({delta_sp:+.4f} vs baseline {BASELINE_AUC['spread']:.4f})"
+    )
 
     print("Training totals model (Savant-enriched)...")
     r_ou = train_totals_model(enriched, feature_cols=ou_features)
     delta_ou = r_ou["metrics"]["roc_auc"] - BASELINE_AUC["totals"]
-    print(f"  AUC {r_ou['metrics']['roc_auc']:.4f}  ({delta_ou:+.4f} vs baseline {BASELINE_AUC['totals']:.4f})")
+    print(
+        f"  AUC {r_ou['metrics']['roc_auc']:.4f}  ({delta_ou:+.4f} vs baseline {BASELINE_AUC['totals']:.4f})"
+    )
 
     # ── Save metrics ──────────────────────────────────────────────────────
     metrics_rows = []
     for name, r in [("moneyline", r_ml), ("spread", r_sp), ("totals", r_ou)]:
         baseline = BASELINE_AUC[name]
         row = {
-            "model":                name,
-            "train_size":           r["train_size"],
-            "test_size":            r["test_size"],
-            "n_bat_features":       n_bat,
-            "n_pit_features":       n_pit,
-            "savant_bat_features":  ",".join(bat_cols),
-            "savant_pit_features":  ",".join(pit_cols),
-            "baseline_roc_auc":     baseline,
-            "roc_auc_delta":        r["metrics"]["roc_auc"] - baseline,
+            "model": name,
+            "train_size": r["train_size"],
+            "test_size": r["test_size"],
+            "n_bat_features": n_bat,
+            "n_pit_features": n_pit,
+            "savant_bat_features": ",".join(bat_cols),
+            "savant_pit_features": ",".join(pit_cols),
+            "baseline_roc_auc": baseline,
+            "roc_auc_delta": r["metrics"]["roc_auc"] - baseline,
         }
         row.update(r["metrics"])
         metrics_rows.append(row)

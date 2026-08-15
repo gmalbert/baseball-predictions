@@ -18,10 +18,11 @@ This script is idempotent — re-running it just overwrites the cached Parquet f
 Usage:
     python scripts/fetch_reference_data.py
 """
+
 from __future__ import annotations
 
-import sys
 import logging
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 def refresh_fg_guts() -> None:
     """Re-fetch FanGraphs Guts! wOBA and cFIP constants."""
     from src.ingestion.fg_guts import fetch_fg_guts
+
     logger.info("Fetching FanGraphs Guts! constants…")
     df = fetch_fg_guts(save=True)
     logger.info("  fg_guts: %d season rows cached", len(df))
@@ -47,6 +49,7 @@ def refresh_fg_guts() -> None:
 def refresh_fg_park_factors(year: int) -> None:
     """Re-fetch FanGraphs park factors (L + R) for the given season."""
     from src.ingestion.fg_park import fetch_fg_park_factors
+
     logger.info("Fetching FanGraphs park factors for %d (L + R)…", year)
     df = fetch_fg_park_factors(year, save=True)
     logger.info("  fg_park %d: %d rows cached", year, len(df))
@@ -55,6 +58,7 @@ def refresh_fg_park_factors(year: int) -> None:
 def refresh_player_registry() -> None:
     """Re-download the Chadwick Bureau player ID cross-reference."""
     from src.ingestion.chadwick import load_player_registry
+
     logger.info("Fetching Chadwick Bureau player registry…")
     df = load_player_registry(force_refresh=True)
     logger.info("  player_registry: %d players cached", len(df))
@@ -65,9 +69,9 @@ if __name__ == "__main__":
     errors: list[str] = []
 
     for label, fn in [
-        ("fg_guts",          refresh_fg_guts),
-        (f"fg_park_{year}",  lambda: refresh_fg_park_factors(year)),
-        ("player_registry",  refresh_player_registry),
+        ("fg_guts", refresh_fg_guts),
+        (f"fg_park_{year}", lambda: refresh_fg_park_factors(year)),
+        ("player_registry", refresh_player_registry),
     ]:
         try:
             fn()

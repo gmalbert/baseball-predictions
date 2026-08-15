@@ -1,11 +1,13 @@
 """Page: Info — methodology, models, confidence tiers, data sources."""
+
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from page_utils import render_sidebar, add_betting_oracle_footer
+from page_utils import add_betting_oracle_footer, render_sidebar
 
 render_sidebar(show_year_filter=False)
 

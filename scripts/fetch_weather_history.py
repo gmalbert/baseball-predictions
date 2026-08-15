@@ -26,20 +26,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pandas as pd
+
 from src.ingestion.weather import build_historical_weather
 
-RETRO_DIR  = ROOT / "data_files" / "retrosheet"
-PROCESSED  = ROOT / "data_files" / "processed"
-MIN_YEAR   = 2020
-OUT_PATH   = PROCESSED / "weather_historical.parquet"
+RETRO_DIR = ROOT / "data_files" / "retrosheet"
+PROCESSED = ROOT / "data_files" / "processed"
+MIN_YEAR = 2020
+OUT_PATH = PROCESSED / "weather_historical.parquet"
 
 
 def main() -> None:
     parquet = RETRO_DIR / "gameinfo.parquet"
     if not parquet.exists():
         raise FileNotFoundError(
-            f"{parquet} not found.\n"
-            "Run  python scripts/build_parquet_data.py  first."
+            f"{parquet} not found.\nRun  python scripts/build_parquet_data.py  first."
         )
 
     print(f"Loading gameinfo parquet ({parquet}) …")
@@ -52,7 +52,7 @@ def main() -> None:
     existing_df: pd.DataFrame | None = None
     already_done: set[str] = set()
     if OUT_PATH.exists():
-        existing_df = pd.read_parquet(OUT_PATH)   # load BEFORE build call overwrites file
+        existing_df = pd.read_parquet(OUT_PATH)  # load BEFORE build call overwrites file
         already_done = set(existing_df["gid"].dropna())
         if already_done:
             print(f"  Resuming — {len(already_done):,} gids already in parquet, skipping them.\n")

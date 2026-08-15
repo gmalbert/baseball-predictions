@@ -18,24 +18,23 @@ root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
 
+from src.evaluation.backtester import BacktestResult, walk_forward_backtest
+from src.evaluation.calibration import calibration_report
+from src.evaluation.dashboard import generate_dashboard_data
+from src.evaluation.profitability import (
+    edge_filter_analysis,
+    profitability_report,
+)
 from src.models.features import build_model_features
-from src.models.underdog_model import train_moneyline_model
 from src.models.spread_model import train_spread_model
 from src.models.totals_model import train_totals_model
-
-from src.evaluation.backtester import walk_forward_backtest, BacktestResult
-from src.evaluation.calibration import calibration_report
-from src.evaluation.profitability import (
-    profitability_report,
-    edge_filter_analysis,
-    monthly_breakdown,
-)
-from src.evaluation.dashboard import generate_dashboard_data
+from src.models.underdog_model import train_moneyline_model
 
 
 def _section(title: str) -> None:
@@ -114,7 +113,7 @@ def main() -> None:
     def _predict_xgb(model, X: pd.DataFrame) -> np.ndarray:
         return model.predict_proba(X.fillna(0))[:, 1]
 
-    from src.models.features import MONEYLINE_FEATURES, TOTALS_FEATURES, SPREAD_FEATURES
+    from src.models.features import MONEYLINE_FEATURES, TOTALS_FEATURES
 
     # Moneyline backtest
     # feature matrix uses 'gid' not 'game_id'; no live odds yet so odds_col
@@ -128,7 +127,7 @@ def main() -> None:
         train_fn=_train_xgb,
         predict_fn=_predict_xgb,
         target_col="home_win",
-        odds_col="home_ml",       # missing → default -110 inside backtester
+        odds_col="home_ml",  # missing → default -110 inside backtester
         pick_type="underdog",
         model_name="xgb_moneyline_v1",
         min_edge=0.02,

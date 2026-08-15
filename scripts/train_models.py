@@ -5,8 +5,9 @@ want to re-train the models on fresh data without using the Streamlit UI.
 
 The script mirrors the logic in the ``Models`` tab of the dashboard.
 """
-from datetime import datetime
+
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # allow imports from the repository root (so "src" is on sys.path)
@@ -15,9 +16,9 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.models.features import build_model_features
-from src.models.underdog_model import train_moneyline_model
 from src.models.spread_model import train_spread_model
 from src.models.totals_model import train_totals_model
+from src.models.underdog_model import train_moneyline_model
 
 
 def main(start_year: int = 2020, end_year: int = None) -> None:
