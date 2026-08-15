@@ -26,6 +26,14 @@ def normalize_quote(
     market_id = canonical_market_id(str(row["market"]))
     american = int(row["outcome_price"])
     point = row.get("outcome_point")
+    # The Odds API can emit "NaN"/"" for markets with no spread line;
+    # never let a non-finite value become a NaN Decimal (pydantic rejects it).
+    try:
+        point_decimal = Decimal(str(point)) if point is not None and str(point) != "" else None
+    except Exception:
+        point_decimal = None
+    if point_decimal is not None and not point_decimal.is_finite():
+        point_decimal = None
     book = str(row["bookmaker"])
     source_updated_at = row.get("source_updated_at")
     if isinstance(source_updated_at, str):
@@ -36,7 +44,7 @@ def normalize_quote(
         book,
         market_id,
         selection.value,
-        point,
+        point_decimal,
         observed_at.isoformat(),
         american,
     )
@@ -47,7 +55,7 @@ def normalize_quote(
         market_id=market_id,
         selection=selection,
         participant_id=row.get("participant_id"),
-        point=Decimal(str(point)) if point is not None else None,
+        point=point_decimal,
         price_decimal=Decimal(str(american_to_decimal(american))),
         price_american=american,
         observed_at=observed_at,
