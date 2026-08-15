@@ -38,35 +38,52 @@ from page_utils import (
 from src.models.score_distribution import ScoreDistribution, independent_poisson_score_distribution
 
 
-def _coherent_game_distribution(
-    home_prob: float, home_rate: float = 4.5, away_rate: float = 4.5
-) -> ScoreDistribution:
-    """Build a coherent score distribution anchored to a target home win prob.
+_LEAGUE_RUNS_PER_GAME = 4.5
 
-    The legacy heuristic gives a single home-moneyline probability from team
-    strength.  This helper turns that into a full joint score distribution
-    (independent Poisson per side) whose moneyline matches the target, so the
-    run-line and totals probabilities come from the same distribution instead
-    of separate ad-hoc formulas.
 
-    ``home_rate``/``away_rate`` are the base run-expectancy anchors (league
-    average ~4.5 R/G); the helper scales them to hit the requested moneyline.
+def _team_run_rate(
+    team_full: str, opponent_full: str, hist_stnd: pd.DataFrame
+) -> float:
+    """Expected runs for ``team_full`` against ``opponent_full``.
+
+    Real per-season team stats drive the estimate: the team's runs scored
+    (offense) blended with the opponent's runs allowed (defense) via a
+    geometric mean, regressed toward the league average so small samples do
+    not dominate.  Falls back to league average when data is missing.
     """
-    home_prob = max(0.02, min(0.98, home_prob))
-    # Solve for the home/away rate ratio that produces the target home ML.
-    # Equal rates give ~0.45 (Poisson ties go to neither side); a stronger
-    # home team (higher home_rate relative to away) raises home ML above that,
-    # and vice versa.  The ratio moves the moneyline; the anchor keeps the
-    # expected total near league average.
-    lo, hi = 0.05, 20.0
-    for _ in range(40):
-        mid = (lo + hi) / 2.0
-        dist = independent_poisson_score_distribution(away_rate, home_rate * mid)
-        if dist.home_moneyline() > home_prob:
-            hi = mid
-        else:
-            lo = mid
-    return independent_poisson_score_distribution(away_rate, home_rate * ((lo + hi) / 2.0))
+    try:
+        last = team_full.split()[-1]
+        team_row = hist_stnd[hist_stnd["team"].str.contains(last, case=False, na=False)]
+        opp_last = opponent_full.split()[-1]
+        opp_row = hist_stnd[hist_stnd["team"].str.contains(opp_last, case=False, na=False)]
+        if not team_row.empty and not opp_row.empty:
+            team_row = team_row.sort_values("season").iloc[-1]
+            opp_row = opp_row.sort_values("season").iloc[-1]
+            offense = float(team_row["RS_per_G"])
+            defense = float(opp_row["RA_per_G"])
+            # Geometric mean of own offense and opponent defense, regressed
+            # toward league average (shrinkage keeps extreme teams honest).
+            blended = (offense * defense) ** 0.5
+            return 0.7 * blended + 0.3 * _LEAGUE_RUNS_PER_GAME
+    except Exception:
+        pass
+    return _LEAGUE_RUNS_PER_GAME
+
+
+def _coherent_game_distribution(
+    home_full: str,
+    away_full: str,
+    hist_stnd: pd.DataFrame,
+) -> ScoreDistribution:
+    """Build a coherent score distribution from real per-game team context.
+
+    Run rates come from each team's actual runs-scored/allowed per game from
+    the precomputed standings, so the moneyline, run line, and totals all fall
+    out of the same joint distribution instead of a W% logistic anchor.
+    """
+    home_rate = _team_run_rate(home_full, away_full, hist_stnd)
+    away_rate = _team_run_rate(away_full, home_full, hist_stnd)
+    return independent_poisson_score_distribution(away_rate, home_rate)
 
 st.set_page_config(
     page_title="Betting Cleanup - MLB Predictions",
@@ -145,11 +162,14 @@ def _build_game_recs(
     """
     home_full = g.get("home_name", "")
     away_full = g.get("away_name", "")
-    home_prob = _estimate_win_prob(home_full, away_full, standings)
-    away_prob = 1.0 - home_prob
     # v2 engine: one coherent joint distribution drives moneyline, run line,
-    # and totals so the three markets reconcile by construction.
-    dist = _coherent_game_distribution(home_prob)
+    # and totals so the three markets reconcile by construction.  Run rates
+    # come from real per-team runs scored/allowed.
+    dist = _coherent_game_distribution(home_full, away_full, hist_stnd)
+    # The moneyline shown in the card comes from the coherent distribution
+    # (team stats), not the W% logistic.
+    home_prob = dist.home_moneyline()
+    away_prob = 1.0 - home_prob - dist.tie_probability()
     recs: dict = {}
 
     if not espn_game:
@@ -402,9 +422,9 @@ def home_page() -> None:
     else:
         st.markdown(f"### 🎯 Today's Games & Betting Recommendations")
         st.caption(
-            "Win probability: current-season W% logistic model (+4% HFA). "
-            "Run line and O/U: derived from one coherent score distribution "
-            "anchored to the same moneyline, so all three markets reconcile. "
+            "Win probability, run line, and O/U: one coherent score distribution "
+            "from each team's real runs-scored/allowed per game, so all three "
+            "markets reconcile. "
             "✅ BET = edge > 3% &nbsp;·&nbsp; ➡ LEAN = 0–3% &nbsp;·&nbsp; ⛔ PASS = negative edge."
         )
 
@@ -441,7 +461,9 @@ def home_page() -> None:
             hk = home_full.split()[-1].lower()
             espn_game = next((eo for eo in espn_odds if hk in eo.get("home_team", "").lower()), None)
             recs      = _build_game_recs(g, espn_game, standings, hist_stnd)
-            home_prob = _estimate_win_prob(home_full, away_full, standings)
+            # v2 engine: win-prob bar uses the same coherent distribution as
+            # the moneyline/run-line/totals cards.
+            home_prob = _coherent_game_distribution(home_full, away_full, hist_stnd).home_moneyline()
 
             with st.container(border=True):
                 # ── Game header ──
