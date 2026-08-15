@@ -197,7 +197,7 @@ def _load_game_context_cache() -> dict:
         league_rpg = recent["total_runs"].mean()
 
         park = (
-            recent.groupby("hometeam")
+            recent.groupby("hometeam", observed=False)
             .agg(games=("gid", "count"), runs=("total_runs", "sum"))
             .reset_index()
         )
@@ -218,7 +218,7 @@ def _load_game_context_cache() -> dict:
             dn["dn"] = dn["dn"].fillna("n").str.lower().str.strip()
             dn = dn[dn["season"] >= max_szn - 2]
             grp = (
-                dn.groupby(["team", "dn"])
+                dn.groupby(["team", "dn"], observed=False)
                 .agg(games=("won", "count"), wins=("won", "sum"))
                 .reset_index()
             )
@@ -253,7 +253,7 @@ def _load_game_context_cache() -> dict:
         max_csv_szn = int(gi_csv["season"].dropna().max())
         recent_csv = gi_csv[gi_csv["season"] >= max_csv_szn - 2]
         ump_park = (
-            recent_csv.groupby("hometeam")["total_runs"]
+            recent_csv.groupby("hometeam", observed=False)["total_runs"]
             .agg(["mean", "count"])
             .reset_index()
         )
@@ -282,7 +282,7 @@ def _load_game_context_cache() -> dict:
             league_ump_mean = float(gi_ump["total_runs"].mean())
 
             ump_grp = (
-                gi_ump.groupby("umphome")["total_runs"]
+                gi_ump.groupby("umphome", observed=False)["total_runs"]
                 .agg(runs_avg="mean", games="count")
                 .reset_index()
             )
@@ -296,7 +296,11 @@ def _load_game_context_cache() -> dict:
                     return 0.0
                 return round(float(vals[-20:].mean() - vals[-40:-20].mean()), 2)
 
-            trends = gi_ump.groupby("umphome").apply(_ump_trend).reset_index()
+            trends = (
+                gi_ump.groupby("umphome", observed=False)
+                .apply(_ump_trend, include_groups=False)
+                .reset_index()
+            )
             trends.columns = ["ump_id", "trend"]
             ump_grp = ump_grp.merge(trends, on="ump_id", how="left")
             ump_grp["trend"] = ump_grp["trend"].fillna(0.0)
@@ -324,7 +328,7 @@ def _load_game_context_cache() -> dict:
         p = p[p["season"] >= max_p - 1]
         p["ip"] = pd.to_numeric(p["p_ipouts"], errors="coerce").fillna(0) / 3
         bp = (
-            p.groupby("team")
+            p.groupby("team", observed=False)
             .agg(total_ip=("ip", "sum"), total_games=("gid", "nunique"))
             .reset_index()
         )
@@ -343,11 +347,14 @@ def _load_game_context_cache() -> dict:
             max_ap = int(ap["season"].dropna().max())
             ap = ap[ap["season"] >= max_ap - 1]
             plat = (
-                ap.groupby("team")
-                .apply(lambda d: pd.Series({
-                    "pct_left": round((d["bat"] == "L").mean(), 3),
-                    "pct_right": round((d["bat"] == "R").mean(), 3),
-                }))
+                ap.groupby("team", observed=False)
+                .apply(
+                    lambda d: pd.Series({
+                        "pct_left": round((d["bat"] == "L").mean(), 3),
+                        "pct_right": round((d["bat"] == "R").mean(), 3),
+                    }),
+                    include_groups=False,
+                )
                 .reset_index()
             )
             plat["short"] = plat["team"].map(_code_to_short)
@@ -590,16 +597,18 @@ def _fetch_pitcher_stats(pitcher_name: str) -> dict:
         if not data or not data.get("stats"):
             return {}
         s = data["stats"][0]["stats"]
+        # Coerce every value to a string so the rendered Stat/Value dataframe
+        # has a uniform column type (pyarrow rejects mixed str/int objects).
         return {
             "W-L":  f"{s.get('wins', '?')}-{s.get('losses', '?')}",
-            "ERA":  s.get("era", "—"),
-            "IP":   s.get("inningsPitched", "—"),
-            "GS":   s.get("gamesStarted", "—"),
-            "K":    s.get("strikeOuts", "—"),
-            "BB":   s.get("baseOnBalls", "—"),
-            "HR":   s.get("homeRuns", "—"),
-            "WHIP": s.get("whip", "—"),
-            "K/9":  s.get("strikeoutsPer9Inn", "—"),
+            "ERA":  str(s.get("era", "—")),
+            "IP":   str(s.get("inningsPitched", "—")),
+            "GS":   str(s.get("gamesStarted", "—")),
+            "K":    str(s.get("strikeOuts", "—")),
+            "BB":   str(s.get("baseOnBalls", "—")),
+            "HR":   str(s.get("homeRuns", "—")),
+            "WHIP": str(s.get("whip", "—")),
+            "K/9":  str(s.get("strikeoutsPer9Inn", "—")),
         }
     except Exception:
         return {}

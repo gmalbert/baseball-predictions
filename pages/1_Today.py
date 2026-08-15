@@ -620,12 +620,13 @@ if st.session_state["schedule_selected_game"] is not None:
     if not _odds_csv.empty:
         with st.expander("📚 Multi-book comparison (Odds API)"):
             import os as _os
-            _has_key = bool(_os.environ.get("ODDS_API_KEY") or st.secrets.get("ODDS_API_KEY", ""))
+            # ODDS_API_KEY comes from .env (loaded by src.ingestion.config).
+            _has_key = bool(_os.environ.get("ODDS_API_KEY"))
             if _has_key:
                 st.caption("Live odds fetched automatically from The Odds API (refreshed hourly).")
             else:
                 st.caption(
-                    "Showing saved odds data. Set `ODDS_API_KEY` in environment or `st.secrets` "
+                    "Showing saved odds data. Set `ODDS_API_KEY` in the .env file "
                     "to enable automatic live fetching."
                 )
             mask_odds = (
