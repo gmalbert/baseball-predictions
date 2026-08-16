@@ -1,16 +1,16 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-08-15T20:43:52.764338+00:00",
+    "generated_at": "2026-08-16T00:12:20.433886+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "status": "pipeline_failed",
+    "status": "no_qualifying_picks",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "e07d42c2b7c7a38d4dcf1485fc2273fe0082293a",
+    "source_commit": "3042be9ba8774c659687ba703c306b9ccce53cef",
     "total_bets": 0,
-    "notes": "ValidationError: 1 validation error for Quote\npoint\n  Input should be a finite number [type=finite_number, input_value=Decimal('NaN'), input_type=Decimal]\n    For further information visit https://errors.pydantic.dev/2.13/v/finite_number",
-    "target_date": "2026-08-15",
+    "notes": "No MLB picks for 2026-08-16",
+    "target_date": "2026-08-16",
     "picks_count": 0
   },
   "bets": []
