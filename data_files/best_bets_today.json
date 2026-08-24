@@ -1,16 +1,16 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-08-23T12:17:48.377539+00:00",
+    "generated_at": "2026-08-24T12:16:32.632393+00:00",
     "model_version": "1.0.0",
     "season": "2026",
     "status": "no_qualifying_picks",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "857f051bf24f0c25b967a23de5a3f757bb8e4a0c",
+    "source_commit": "b517691da574dfa518ba74ca05f494a70497f44f",
     "total_bets": 0,
-    "notes": "No MLB picks for 2026-08-23",
-    "target_date": "2026-08-23",
+    "notes": "No MLB picks for 2026-08-24",
+    "target_date": "2026-08-24",
     "picks_count": 0
   },
   "bets": []
