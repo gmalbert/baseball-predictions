@@ -1,16 +1,16 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-09-01T12:24:01.076047+00:00",
+    "generated_at": "2026-09-02T12:24:00.199959+00:00",
     "model_version": "1.0.0",
     "season": "2026",
     "status": "no_qualifying_picks",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "86efe788e2a22eeeb22926014253a3ba1aae597b",
+    "source_commit": "685cdff166df6eb84f69d8c0b6ac291713511aab",
     "total_bets": 0,
-    "notes": "No MLB picks for 2026-09-01",
-    "target_date": "2026-09-01",
+    "notes": "No MLB picks for 2026-09-02",
+    "target_date": "2026-09-02",
     "picks_count": 0
   },
   "bets": []
