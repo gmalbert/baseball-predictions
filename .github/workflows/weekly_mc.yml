@@ -31,15 +31,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Restore cached historical Savant leaderboards
-        uses: actions/cache@v4
-        with:
-          path: data_files/raw
-          key: savant-leaderboards-v1-${{ runner.os }}
-          restore-keys: |
-            savant-leaderboards-v1-
-
       - name: Download Savant leaderboards
+        # The historical 2020–2025 CSVs are versioned with the repository.
+        # The downloader reuses them, so scheduled rebuilds do not depend on
+        # Baseball Savant being available from GitHub-hosted runners.
         run: python scripts/fetch_savant_leaderboards.py
 
       - name: Run Monte Carlo feature selection (1 000 trials)
