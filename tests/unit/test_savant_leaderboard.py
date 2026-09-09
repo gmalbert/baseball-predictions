@@ -58,7 +58,9 @@ def test_existing_savant_file_is_reused_without_http_request(monkeypatch, tmp_pa
 
     monkeypatch.setattr(savant_leaderboard.requests, "get", fail_get)
 
-    result = savant_leaderboard.fetch_and_save_batter_leaderboard([2020, 2021, 2022, 2023, 2024, 2025])
+    result = savant_leaderboard.fetch_and_save_batter_leaderboard(
+        [2020, 2021, 2022, 2023, 2024, 2025]
+    )
 
     assert result.loc[0, "player_id"] == 1
     assert result.loc[0, "year"] == 2025
