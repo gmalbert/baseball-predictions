@@ -31,6 +31,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore cached historical Savant leaderboards
+        uses: actions/cache@v4
+        with:
+          path: data_files/raw
+          key: savant-leaderboards-v1-${{ runner.os }}
+          restore-keys: |
+            savant-leaderboards-v1-
+
       - name: Download Savant leaderboards
         run: python scripts/fetch_savant_leaderboards.py
 

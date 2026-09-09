@@ -20,12 +20,18 @@ from time import sleep
 
 import pandas as pd
 import requests
+from requests import Response
 
 from .config import config
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://baseballsavant.mlb.com/leaderboard/custom"
+REQUEST_HEADERS = {
+    "Accept": "text/csv,application/json;q=0.9,*/*;q=0.8",
+    "Referer": "https://baseballsavant.mlb.com/",
+    "User-Agent": "Mozilla/5.0 (compatible; baseball-predictions/1.0)",
+}
 
 # ── Batter selections (124 keys → 128 total columns with 4 auto-included) ──
 BATTER_SELECTIONS: list[str] = [
@@ -361,10 +367,30 @@ def download_savant_leaderboard(
         min_pa,
     )
 
-    resp = requests.get(BASE_URL, params=params, timeout=120)
-    resp.raise_for_status()
+    try:
+        df = _request_and_parse_savant(params)
+    except (requests.RequestException, ValueError) as exc:
+        # Savant occasionally returns an HTML/WAF response for a multi-season
+        # request while still reporting HTTP 200. Retry as one season per
+        # request; this is slower but avoids losing the whole scheduled rebuild.
+        if len(years) == 1:
+            raise RuntimeError(
+                f"Baseball Savant did not return a valid {player_type} CSV "
+                f"for season {years[0]}: {exc}"
+            ) from exc
 
-    df = pd.read_csv(StringIO(resp.text))
+        logger.warning(
+            "Combined Savant %s request failed (%s); retrying one season at a time.",
+            player_type,
+            exc,
+        )
+        frames = []
+        for year in years:
+            year_params = {**params, "year": str(year)}
+            frames.append(_request_and_parse_savant(year_params))
+            sleep(1)
+        df = pd.concat(frames, ignore_index=True)
+
     # Normalize the split name header Savant emits
     df.columns = [c.strip().strip('"').strip() for c in df.columns]
 
@@ -372,23 +398,58 @@ def download_savant_leaderboard(
     return df
 
 
+def _request_and_parse_savant(params: dict[str, str]) -> pd.DataFrame:
+    """Fetch and parse a Savant CSV, rejecting HTML/error pages explicitly."""
+    resp: Response = requests.get(
+        BASE_URL,
+        params=params,
+        headers=REQUEST_HEADERS,
+        timeout=120,
+    )
+    resp.raise_for_status()
+
+    body = resp.text.lstrip("\ufeff \r\n\t")
+    preview = body[:240].replace("\r", " ").replace("\n", " ")
+    if not body or body.startswith("<") or "access denied" in body[:1000].lower():
+        raise ValueError(
+            f"unexpected Savant response (content-type={resp.headers.get('Content-Type')!r}, "
+            f"preview={preview!r})"
+        )
+
+    try:
+        df = pd.read_csv(StringIO(body))
+    except pd.errors.ParserError as exc:
+        raise ValueError(f"Savant response was not valid CSV (preview={preview!r})") from exc
+
+    if not {"player_id", "year"}.issubset(df.columns):
+        raise ValueError(
+            f"Savant response did not contain leaderboard columns "
+            f"(found={list(df.columns)[:8]!r}, preview={preview!r})"
+        )
+    return df
+
+
 def fetch_and_save_batter_leaderboard(
     years: int | list[int],
     min_pa: str = "q",
+    force: bool = False,
 ) -> pd.DataFrame:
     """Download batter leaderboard(s) and save to data_files/raw/batting/.
 
     If multiple years are supplied they are combined into one CSV named
     ``savant_batter_<first>_<last>.csv``.
     """
-    df = download_savant_leaderboard(years, "batter", min_pa)
-
     if isinstance(years, int):
         fname = f"savant_batter_{years}.csv"
     else:
         fname = f"savant_batter_{min(years)}_{max(years)}.csv"
 
     outpath = config.raw_dir / "batting" / fname
+    if not force and outpath.exists():
+        logger.info("Reusing cached Savant batter leaderboard: %s", outpath)
+        return pd.read_csv(outpath)
+
+    df = download_savant_leaderboard(years, "batter", min_pa)
     outpath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(outpath, index=False)
     logger.info("Saved → %s", outpath)
@@ -398,20 +459,24 @@ def fetch_and_save_batter_leaderboard(
 def fetch_and_save_pitcher_leaderboard(
     years: int | list[int],
     min_pa: str = "q",
+    force: bool = False,
 ) -> pd.DataFrame:
     """Download pitcher leaderboard(s) and save to data_files/raw/pitching/.
 
     If multiple years are supplied they are combined into one CSV named
     ``savant_pitcher_<first>_<last>.csv``.
     """
-    df = download_savant_leaderboard(years, "pitcher", min_pa)
-
     if isinstance(years, int):
         fname = f"savant_pitcher_{years}.csv"
     else:
         fname = f"savant_pitcher_{min(years)}_{max(years)}.csv"
 
     outpath = config.raw_dir / "pitching" / fname
+    if not force and outpath.exists():
+        logger.info("Reusing cached Savant pitcher leaderboard: %s", outpath)
+        return pd.read_csv(outpath)
+
+    df = download_savant_leaderboard(years, "pitcher", min_pa)
     outpath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(outpath, index=False)
     logger.info("Saved → %s", outpath)
@@ -420,8 +485,14 @@ def fetch_and_save_pitcher_leaderboard(
 
 def fetch_all_savant_leaderboards(
     years: list[int] | None = None,
+    force: bool = False,
 ) -> None:
-    """Download batter + pitcher leaderboards in two HTTP requests total.
+    """Download batter + pitcher leaderboards.
+
+    Existing saved leaderboards are reused unless ``force`` is true. The
+    normal path uses one request per player type. If Savant returns an
+    invalid combined-season response, ``download_savant_leaderboard`` retries
+    one season at a time before failing.
 
     Args:
         years: List of seasons to include.  Defaults to
@@ -430,8 +501,12 @@ def fetch_all_savant_leaderboards(
     if years is None:
         years = list(range(config.start_year, config.end_year + 1))
 
-    fetch_and_save_batter_leaderboard(years)
-    sleep(5)
-    fetch_and_save_pitcher_leaderboard(years)
+    batter_path = config.raw_dir / "batting" / f"savant_batter_{min(years)}_{max(years)}.csv"
+    pitcher_path = config.raw_dir / "pitching" / f"savant_pitcher_{min(years)}_{max(years)}.csv"
+
+    fetch_and_save_batter_leaderboard(years, force=force)
+    if force or not pitcher_path.exists() or not batter_path.exists():
+        sleep(5)
+    fetch_and_save_pitcher_leaderboard(years, force=force)
 
     logger.info("All Savant leaderboard CSVs downloaded.")
