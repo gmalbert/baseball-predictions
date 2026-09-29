@@ -132,7 +132,31 @@ def fetch_schedule_for_date(
                 "ingestion_run_id": run_id,
             }
         )
-    frame = pd.DataFrame(rows)
+    # Keep the normalized schedule contract intact when the API has no games
+    # for the requested date.  Callers use ``frame.empty`` to take the normal
+    # no-games path, and the score normalization below still needs its columns.
+    frame = pd.DataFrame(
+        rows,
+        columns=[
+            "game_id",
+            "provider_game_id",
+            "date",
+            "away_team",
+            "home_team",
+            "away_probable_pitcher",
+            "home_probable_pitcher",
+            "venue",
+            "game_time",
+            "scheduled_start_utc",
+            "status",
+            "away_score",
+            "home_score",
+            "game_type",
+            "observed_at",
+            "raw_payload_hash",
+            "ingestion_run_id",
+        ],
+    )
     # MLB StatsAPI returns scores as strings for in-progress games and ints
     # for completed ones; normalize so pyarrow can write a single column type.
     for col in ("away_score", "home_score"):
