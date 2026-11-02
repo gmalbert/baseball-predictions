@@ -1,16 +1,16 @@
 {
   "meta": {
     "sport": "MLB",
-    "generated_at": "2026-11-01T17:40:33.357317+00:00",
+    "generated_at": "2026-11-02T21:25:32.810621+00:00",
     "model_version": "1.0.0",
     "season": "2026",
     "status": "no_games",
     "tier_definition": "edge-v1",
     "lookahead_days": 0,
-    "source_commit": "2a18ccee4fa82e5f4fd91f0f97420be9469f36ac",
+    "source_commit": "8bb95f7be9c50dad820c9a0d82c1fdfa8f834b52",
     "total_bets": 0,
     "notes": "No games were found on the target date.",
-    "target_date": "2026-11-01",
+    "target_date": "2026-11-02",
     "picks_count": 0
   },
   "bets": []
