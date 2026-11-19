@@ -92,14 +92,18 @@ MLB betting analytics platform for daily wagering insights, model backtesting, a
    .\venv\Scripts\Activate.ps1
    pip install -r requirements.txt
    ```
-3. Run training/ingestion once:
+3. The repository includes the generated Retrosheet Parquet files, so you can launch the app directly:
+   ```bash
+   streamlit run predictions.py
+   ```
+
+   Only run the Parquet conversion after you have downloaded the five local Retrosheet CSV
+   source files (`gameinfo.csv`, `teamstats.csv`, `batting.csv`, `pitching.csv`, and
+   `allplayers.csv`) into `data_files/retrosheet/`:
+
    ```bash
    python scripts/build_parquet_data.py
    python scripts/train_models.py
-   ```
-4. Launch site:
-   ```bash
-   streamlit run predictions.py
    ```
 
 ## Live Odds Behavior
@@ -120,4 +124,3 @@ For questions or feature requests, create an issue in GitHub with:
 - Use case (model, market, UI)
 - Sample game/date and your expected picker outcome
 - Actual vs predicted output in the app
-

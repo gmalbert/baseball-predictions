@@ -23,10 +23,44 @@ from pathlib import Path
 import pandas as pd
 
 RAW_DIR = Path(__file__).resolve().parents[1] / "data_files" / "retrosheet"
+REQUIRED_CSVS = (
+    "gameinfo.csv",
+    "teamstats.csv",
+    "batting.csv",
+    "pitching.csv",
+    "allplayers.csv",
+)
 
 # Only keep rows from this year onward — enough for all model training.
 # Drops ~80 % of rows in batting/pitching (data goes back to 1871).
 BUILD_MIN_YEAR = 2000
+
+
+def _validate_source_files() -> None:
+    """Fail clearly when the local, gitignored CSV source data is unavailable."""
+    missing = [name for name in REQUIRED_CSVS if not (RAW_DIR / name).is_file()]
+    if not missing:
+        return
+
+    available_parquet = [
+        name.replace(".csv", ".parquet")
+        for name in REQUIRED_CSVS
+        if (RAW_DIR / name.replace(".csv", ".parquet")).is_file()
+    ]
+    message = [
+        "Cannot build Parquet files because the required Retrosheet CSV source files are missing:",
+        *[f"  - {RAW_DIR / name}" for name in missing],
+        "",
+        "These CSVs are intentionally not included in the repository. Download or restore them "
+        f"into {RAW_DIR} before rerunning this script.",
+    ]
+    if available_parquet:
+        message.extend([
+            "",
+            "The repository already contains the generated Parquet files, so you can run the app "
+            "without rebuilding them.",
+        ])
+    raise SystemExit("\n".join(message))
 
 
 def _lean_write(
@@ -284,6 +318,7 @@ def build_allplayers() -> None:
 
 
 if __name__ == "__main__":
+    _validate_source_files()
     print(f"Reading CSVs from {RAW_DIR}\n")
     build_gameinfo()
     build_teamstats()
